@@ -14,11 +14,7 @@ estructura y el contrato para la futura integración del backend.
 | Password | `admin123` |
 | Override | env vars `ADMIN_EMAIL` / `ADMIN_PASSWORD` |
 
-<<<<<<< Updated upstream
-=======
 También hay un icono de perfil en el header de la tienda que enlaza a `/admin/login`.
-
->>>>>>> Stashed changes
 ## Mapa de rutas
 
 | Ruta | Método | Auth | Descripción |

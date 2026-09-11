@@ -28,9 +28,6 @@ body {
 }
 
 .material-symbols-outlined {
-<<<<<<< Updated upstream
-    font-size: 20px;
-=======
     font-family: 'Material Symbols Outlined';
     font-weight: normal;
     font-style: normal;
@@ -43,7 +40,6 @@ body {
     direction: ltr;
     font-feature-settings: 'liga';
     -webkit-font-smoothing: antialiased;
->>>>>>> Stashed changes
     vertical-align: middle;
 }
 
