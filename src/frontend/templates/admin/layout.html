@@ -1,0 +1,80 @@
+<!--
+ Admin panel — shared layout partials (sidebar, topbar, head).
+ Pages: dashboard.html, orders.html, catalog.html, inventory.html.
+ TODO(backend): replace mock data via AdminDataProvider — see docs/admin-panel.md.
+-->
+
+{{ define "admin_head" }}
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ if .title }}{{ .title }} — {{ end }}Apparel Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Symbols:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <link rel="stylesheet" type="text/css" href="{{ .baseUrl }}/static/admin/admin.css">
+    <link rel='shortcut icon' type='image/x-icon' href='{{ .baseUrl }}/static/favicon.ico' />
+</head>
+
+<body>
+{{ end }}
+
+{{ define "admin_sidebar" }}
+<aside class="admin-sidebar">
+    <div class="sidebar-brand">
+        <span class="brand-name">Apparel Admin</span>
+        <span class="brand-sub">Back-office Management</span>
+    </div>
+    <nav class="sidebar-nav">
+        <a href="{{ .baseUrl }}/admin" class="nav-item{{ if eq .active "dashboard" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined">dashboard</span>
+            <span>Dashboard</span>
+        </a>
+        <a href="{{ .baseUrl }}/admin/catalogo" class="nav-item{{ if eq .active "catalogo" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined">grid_view</span>
+            <span>Catálogo</span>
+        </a>
+        <a href="{{ .baseUrl }}/admin/inventario" class="nav-item{{ if eq .active "inventario" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined">inventory_2</span>
+            <span>Inventario</span>
+        </a>
+        <a href="{{ .baseUrl }}/admin/pedidos" class="nav-item{{ if eq .active "pedidos" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined">receipt_long</span>
+            <span>Pedidos</span>
+        </a>
+    </nav>
+    <div class="sidebar-footer">
+        <!-- TODO(backend): /admin/ajustes page is a documented stub. -->
+        <a href="#" class="nav-item nav-disabled" title="Próximamente">
+            <span class="material-symbols-outlined">settings</span>
+            <span>Ajustes</span>
+        </a>
+        <a href="{{ .baseUrl }}/admin/logout" class="nav-item">
+            <span class="material-symbols-outlined">logout</span>
+            <span>Cerrar sesión</span>
+        </a>
+    </div>
+</aside>
+{{ end }}
+
+{{ define "admin_topbar" }}
+<header class="admin-topbar">
+    <div class="topbar-search">
+        <span class="material-symbols-outlined">search</span>
+        <input type="search" placeholder="{{ .search_placeholder }}">
+    </div>
+    <div class="topbar-actions">
+        <button type="button" class="icon-btn" title="Notificaciones">
+            <span class="material-symbols-outlined">notifications</span>
+        </button>
+        <button type="button" class="icon-btn" title="Ayuda">
+            <span class="material-symbols-outlined">help</span>
+        </button>
+        <div class="topbar-avatar" title="admin@boutique.com">A</div>
+    </div>
+</header>
+{{ end }}

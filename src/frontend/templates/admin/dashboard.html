@@ -1,0 +1,113 @@
+<!-- Admin panel — Dashboard -->
+
+{{ define "admin_dashboard" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">
+    {{ template "admin_sidebar" . }}
+    <div class="admin-main">
+        {{ template "admin_topbar" . }}
+        <main class="admin-content">
+
+            <div class="page-head">
+                <div>
+                    <h1>{{ .title }}</h1>
+                    <p class="page-sub">{{ .subtitle }}</p>
+                </div>
+                <div class="page-actions">
+                    <span class="chip"><span class="material-symbols-outlined">calendar_month</span> Today, Oct 24</span>
+                    <!-- TODO(backend): wire real export endpoint. -->
+                    <button type="button" class="btn-dark"><span class="material-symbols-outlined">download</span> Export</button>
+                </div>
+            </div>
+
+            <section class="stats-grid stats-grid-4">
+                {{ range .dashboard.Stats }}
+                <div class="stat-card">
+                    <div class="stat-head">
+                        <span class="stat-label">{{ .Label }}</span>
+                        {{ if .Icon }}<span class="material-symbols-outlined stat-icon">{{ .Icon }}</span>{{ end }}
+                    </div>
+                    <div class="stat-value">{{ .Value }}</div>
+                    {{ if .SubLabel }}
+                    <div class="stat-sub">{{ .SubLabel }}</div>
+                    {{ else }}
+                    <div class="stat-foot">
+                        <span class="stat-delta {{ if .DeltaUp }}up{{ else }}down{{ end }}">{{ .Delta }}</span>
+                        <canvas class="spark" data-values="{{ joinInts .Spark "," }}" data-color="{{ if .DeltaUp }}#1a1a1a{{ else }}#c0392b{{ end }}"></canvas>
+                    </div>
+                    {{ end }}
+                </div>
+                {{ end }}
+            </section>
+
+            <section class="dash-grid">
+                <div class="card chart-card">
+                    <div class="card-head">
+                        <h2>Ventas del Mes</h2>
+                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">more_horiz</span></button>
+                    </div>
+                    <div class="chart-wrap">
+                        <canvas id="monthlySales" data-values="{{ joinInts .dashboard.MonthlySales "," }}"></canvas>
+                    </div>
+                </div>
+
+                <div class="card top-products">
+                    <div class="card-head">
+                        <h2>Top Productos</h2>
+                        <a href="{{ .baseUrl }}/admin/catalogo" class="link-muted">VER TODOS</a>
+                    </div>
+                    <ul class="product-list">
+                        {{ range .dashboard.TopProducts }}
+                        <li class="product-row">
+                            <img class="product-thumb" src="{{ .ImgURL }}" alt="{{ .Name }}">
+                            <div class="product-info">
+                                <span class="product-name">{{ .Name }}</span>
+                                <span class="product-sku">SKU: {{ .SKU }}</span>
+                            </div>
+                            <span class="product-sales">{{ .Sales }}<small>Sales</small></span>
+                        </li>
+                        {{ end }}
+                    </ul>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <h2>Actividad Reciente</h2>
+                    <a href="{{ .baseUrl }}/admin/pedidos" class="btn-light">View All Orders</a>
+                </div>
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Customer</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th class="num">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{ range .dashboard.RecentOrders }}
+                        <tr>
+                            <td class="mono">{{ .ID }}</td>
+                            <td>
+                                <span class="customer"><span class="avatar">{{ .CustomerInit }}</span>{{ .Customer }}</span>
+                            </td>
+                            <td>{{ .Date }}</td>
+                            <td><span class="badge {{ statusClass .Status }}">{{ .Status }}</span></td>
+                            <td class="num">{{ .Total }}</td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+            </section>
+
+        </main>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{{ .baseUrl }}/static/admin/admin.js"></script>
+</body>
+
+</html>
+{{ end }}
