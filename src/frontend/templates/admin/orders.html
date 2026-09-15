@@ -1,0 +1,74 @@
+<!-- Admin panel — Pedidos -->
+
+{{ define "admin_orders" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">
+    {{ template "admin_sidebar" . }}
+    <div class="admin-main">
+        {{ template "admin_topbar" . }}
+        <main class="admin-content">
+
+            <div class="page-head">
+                <div>
+                    <h1>{{ .title }}</h1>
+                    <p class="page-sub">{{ .subtitle }}</p>
+                </div>
+                <div class="page-actions">
+                    <div class="date-range">
+                        <span class="date-range-label">Rango de Fechas</span>
+                        <!-- TODO(backend): real date-range picker + filtering. -->
+                        <span class="chip"><span class="material-symbols-outlined">calendar_month</span> {{ .page.DateRange }}</span>
+                    </div>
+                    <button type="button" class="btn-light"><span class="material-symbols-outlined">download</span> Exportar</button>
+                </div>
+            </div>
+
+            <section class="card">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Date</th>
+                            <th>Customer Name</th>
+                            <th class="num">Total Amount</th>
+                            <th>Payment Method</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{ range .page.Orders }}
+                        <tr>
+                            <td class="mono">{{ .ID }}</td>
+                            <td>{{ .Date }}</td>
+                            <td>{{ .Customer }}</td>
+                            <td class="num">{{ .Total }}</td>
+                            <td>
+                                <span class="payment">
+                                    <span class="material-symbols-outlined">{{ .PaymentIcon }}</span>
+                                    {{ .PaymentMethod }}
+                                </span>
+                            </td>
+                            <td><span class="badge {{ statusClass .Status }}">{{ .Status }}</span></td>
+                            <!-- TODO(backend): /admin/pedidos/{id} order detail view. -->
+                            <td class="num"><a href="#" class="link-action">Ver Detalles</a></td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+                <div class="table-foot">
+                    <span>Mostrando {{ .page.ShowingFrom }} a {{ .page.ShowingTo }} de {{ .page.Total }} pedidos</span>
+                    <div class="pager">
+                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">chevron_left</span></button>
+                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">chevron_right</span></button>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</div>
+</body>
+
+</html>
+{{ end }}

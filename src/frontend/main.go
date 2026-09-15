@@ -162,6 +162,18 @@ func main() {
 	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
 
+	// Admin panel (back-office). Login is public; everything else under
+	// /admin is guarded by requireAdminAuth. See docs/admin-panel.md.
+	r.HandleFunc(baseUrl+"/admin/login", svc.adminLoginViewHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/admin/login", svc.adminLoginSubmitHandler).Methods(http.MethodPost)
+	adm := r.PathPrefix(baseUrl + "/admin").Subrouter()
+	adm.Use(requireAdminAuth)
+	adm.HandleFunc("", svc.adminDashboardHandler).Methods(http.MethodGet, http.MethodHead)
+	adm.HandleFunc("/pedidos", svc.adminOrdersHandler).Methods(http.MethodGet, http.MethodHead)
+	adm.HandleFunc("/catalogo", svc.adminCatalogHandler).Methods(http.MethodGet, http.MethodHead)
+	adm.HandleFunc("/inventario", svc.adminInventoryHandler).Methods(http.MethodGet, http.MethodHead)
+	adm.HandleFunc("/logout", svc.adminLogoutHandler).Methods(http.MethodGet)
+
 	var handler http.Handler = r
 	handler = &logHandler{log: log, next: handler}     // add logging
 	handler = ensureSessionID(handler)                 // add session ID
