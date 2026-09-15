@@ -1,10 +1,12 @@
 # Sync branches derived from development.
 #
 # Trigger: a Pull Request is merged INTO development.
-# For every branch B that derives from development (i.e. development is an
-# ancestor of B), open an automatic PR from a temp branch (merge of
-# development into B) back into B. Branches with merge conflicts are skipped
-# and reported in the job summary; they require manual resolution.
+# For every branch B that derives from development (i.e. B's merge-base with
+# development is a commit that is NOT reachable from main, meaning B forked
+# from development's own history), merge development into B and push the
+# result directly to B (a fast-forward, since the merge contains all of B's
+# history). Branches with merge conflicts are skipped and reported in the
+# job summary; they require manual resolution.
 
 name: "Sync development into derived branches"
 
@@ -38,7 +40,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout development (post-merge)
         uses: actions/checkout@v7
@@ -59,8 +60,6 @@ jobs:
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/
 
       - name: Sync development into derived branches
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -74,17 +73,15 @@ jobs:
             echo ""
             echo "Source: \`development\` @ $(git rev-parse --short origin/development)"
             echo ""
-            echo "| Branch | Status | PR |"
+            echo "| Branch | Status | Notes |"
             echo "| --- | --- | --- |"
           } >> "$SUMMARY_FILE"
 
-          # Iterate over origin branches only (ignore upstream/* and local refs)
-          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/); do
-            # Strip the leading "origin/" prefix
-            BRANCH="${ref#origin/}"
-
-            # Skip HEAD symbolic ref and protected branches
-            if [[ "$BRANCH" == "HEAD" ]]; then continue; fi
+          # Iterate over the branch heads that exist on origin. ls-remote
+          # returns real branches only, so the origin/HEAD symref, upstream/*
+          # and local refs are never picked up.
+          for BRANCH in $(git ls-remote --heads origin | sed 's|.*refs/heads/||'); do
+            # Skip protected branches
             if [[ "$BRANCH" =~ $SKIP_PATTERN ]]; then
               continue
             fi
@@ -94,16 +91,25 @@ jobs:
 
             echo "::group::Branch: $BRANCH"
 
-            # Verify the branch derives from development
-            if ! git merge-base --is-ancestor origin/development "origin/$BRANCH"; then
-              echo "  $BRANCH does NOT derive from development (development is not an ancestor). Skipping."
+            # Verify the branch derives from development: its merge-base with
+            # development must be a commit that is not reachable from main.
+            # (A branch forked from main shares a merge-base that IS in main.)
+            MB_DEV=$(git merge-base origin/development "origin/$BRANCH" || true)
+            if [ -z "$MB_DEV" ]; then
+              echo "  $BRANCH shares no history with development. Skipping."
+              echo "| \`$BRANCH\` | Skipped (unrelated history) | — |" >> "$SUMMARY_FILE"
+              echo "::endgroup::"
+              continue
+            fi
+            if git merge-base --is-ancestor "$MB_DEV" origin/main; then
+              echo "  $BRANCH does NOT derive from development (fork point is reachable from main). Skipping."
               echo "| \`$BRANCH\` | Skipped (not derived from development) | — |" >> "$SUMMARY_FILE"
               echo "::endgroup::"
               continue
             fi
 
             # Check if branch is already up to date with development
-            if [ "$(git rev-parse origin/development)" = "$(git merge-base origin/development "origin/$BRANCH")" ]; then
+            if [ "$(git rev-parse origin/development)" = "$MB_DEV" ]; then
               # development HEAD is reachable from B => B already contains everything in development
               echo "  $BRANCH is already up to date with development. Skipping."
               echo "| \`$BRANCH\` | Already up to date | — |" >> "$SUMMARY_FILE"
@@ -117,42 +123,15 @@ jobs:
             git checkout -b "$TEMP_BRANCH" "origin/$BRANCH"
 
             if git merge --no-edit --no-ff origin/development; then
-              # No conflicts: push temp branch and open/update PR
-              git push --force-with-lease origin "$TEMP_BRANCH"
-
-              # Check if a PR already exists for this head/base pair
-              EXISTING_PR=$(gh pr list \
-                --head "$TEMP_BRANCH" \
-                --base "$BRANCH" \
-                --state open \
-                --json number \
-                --jq '.[0].number // empty' \
-                || echo "")
-
-              PR_BODY=":robot: Automated sync PR from \`development\` into \`$BRANCH\`.
-
-          This PR was created by the \`sync-branches\` workflow after a PR was merged into \`development\`.
-
-          - Source: \`development\` @ $(git rev-parse --short origin/development)
-          - Target: \`$BRANCH\`
-          - Triggering PR: #${{ github.event.pull_request.number }}
-
-          Review the diff and merge to keep \`$BRANCH\` in sync with \`development\`."
-
-              if [ -n "$EXISTING_PR" ]; then
-                echo "  Updating existing PR #$EXISTING_PR ($TEMP_BRANCH -> $BRANCH)"
-                gh pr edit "$EXISTING_PR" --body "$PR_BODY"
-                echo "| \`$BRANCH\` | Updated existing PR | #$EXISTING_PR |" >> "$SUMMARY_FILE"
+              # No conflicts: push the merged result straight onto the target
+              # branch. This is a fast-forward for B (the temp branch contains
+              # all of B's history plus the merge), so no force is needed.
+              if git push origin "HEAD:refs/heads/$BRANCH"; then
+                echo "  $BRANCH synced with development."
+                echo "| \`$BRANCH\` | Synced | — |" >> "$SUMMARY_FILE"
               else
-                NEW_PR=$(gh pr create \
-                  --head "$TEMP_BRANCH" \
-                  --base "$BRANCH" \
-                  --title "chore: sync development into ${BRANCH}" \
-                  --body "$PR_BODY" \
-                  --json number \
-                  --jq '.number')
-                echo "  Opened PR #$NEW_PR ($TEMP_BRANCH -> $BRANCH)"
-                echo "| \`$BRANCH\` | Opened PR | #$NEW_PR |" >> "$SUMMARY_FILE"
+                echo "  Failed to push merged result to $BRANCH. Skipping."
+                echo "| \`$BRANCH\` | ⚠️ Push failed | — |" >> "$SUMMARY_FILE"
               fi
             else
               # Merge conflict: abort, skip, and report
