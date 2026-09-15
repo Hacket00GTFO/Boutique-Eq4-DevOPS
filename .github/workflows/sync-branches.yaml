@@ -1,10 +1,12 @@
 # Sync branches derived from development.
 #
 # Trigger: a Pull Request is merged INTO development.
-# For every branch B that derives from development (i.e. development is an
-# ancestor of B), open an automatic PR from a temp branch (merge of
-# development into B) back into B. Branches with merge conflicts are skipped
-# and reported in the job summary; they require manual resolution.
+# For every branch B that derives from development (i.e. B's merge-base with
+# development is a commit that is NOT reachable from main, meaning B forked
+# from development's own history), open an automatic PR from a temp branch
+# (merge of development into B) back into B. Branches with merge conflicts
+# are skipped and reported in the job summary; they require manual
+# resolution.
 
 name: "Sync development into derived branches"
 
@@ -78,13 +80,11 @@ jobs:
             echo "| --- | --- | --- |"
           } >> "$SUMMARY_FILE"
 
-          # Iterate over origin branches only (ignore upstream/* and local refs)
-          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/); do
-            # Strip the leading "origin/" prefix
-            BRANCH="${ref#origin/}"
-
-            # Skip HEAD symbolic ref and protected branches
-            if [[ "$BRANCH" == "HEAD" ]]; then continue; fi
+          # Iterate over the branch heads that exist on origin. ls-remote
+          # returns real branches only, so the origin/HEAD symref, upstream/*
+          # and local refs are never picked up.
+          for BRANCH in $(git ls-remote --heads origin | sed 's|.*refs/heads/||'); do
+            # Skip protected branches
             if [[ "$BRANCH" =~ $SKIP_PATTERN ]]; then
               continue
             fi
@@ -94,16 +94,25 @@ jobs:
 
             echo "::group::Branch: $BRANCH"
 
-            # Verify the branch derives from development
-            if ! git merge-base --is-ancestor origin/development "origin/$BRANCH"; then
-              echo "  $BRANCH does NOT derive from development (development is not an ancestor). Skipping."
+            # Verify the branch derives from development: its merge-base with
+            # development must be a commit that is not reachable from main.
+            # (A branch forked from main shares a merge-base that IS in main.)
+            MB_DEV=$(git merge-base origin/development "origin/$BRANCH" || true)
+            if [ -z "$MB_DEV" ]; then
+              echo "  $BRANCH shares no history with development. Skipping."
+              echo "| \`$BRANCH\` | Skipped (unrelated history) | — |" >> "$SUMMARY_FILE"
+              echo "::endgroup::"
+              continue
+            fi
+            if git merge-base --is-ancestor "$MB_DEV" origin/main; then
+              echo "  $BRANCH does NOT derive from development (fork point is reachable from main). Skipping."
               echo "| \`$BRANCH\` | Skipped (not derived from development) | — |" >> "$SUMMARY_FILE"
               echo "::endgroup::"
               continue
             fi
 
             # Check if branch is already up to date with development
-            if [ "$(git rev-parse origin/development)" = "$(git merge-base origin/development "origin/$BRANCH")" ]; then
+            if [ "$(git rev-parse origin/development)" = "$MB_DEV" ]; then
               # development HEAD is reachable from B => B already contains everything in development
               echo "  $BRANCH is already up to date with development. Skipping."
               echo "| \`$BRANCH\` | Already up to date | — |" >> "$SUMMARY_FILE"
