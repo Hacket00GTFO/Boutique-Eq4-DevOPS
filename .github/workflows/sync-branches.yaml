@@ -126,8 +126,17 @@ jobs:
             git checkout -b "$TEMP_BRANCH" "origin/$BRANCH"
 
             if git merge --no-edit --no-ff origin/development; then
-              # No conflicts: push temp branch and open/update PR
-              git push --force-with-lease origin "$TEMP_BRANCH"
+              # No conflicts: push temp branch (plain --force; --force-with-lease
+              # refuses when there is no remote-tracking ref for a brand-new
+              # sync/* branch) and open/update PR
+              if ! git push --force origin "$TEMP_BRANCH"; then
+                echo "  Failed to push $TEMP_BRANCH. Skipping."
+                echo "| \`$BRANCH\` | ⚠️ Push failed | — |" >> "$SUMMARY_FILE"
+                git checkout development
+                git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+                echo "::endgroup::"
+                continue
+              fi
 
               # Check if a PR already exists for this head/base pair
               EXISTING_PR=$(gh pr list \
@@ -150,8 +159,11 @@ jobs:
 
               if [ -n "$EXISTING_PR" ]; then
                 echo "  Updating existing PR #$EXISTING_PR ($TEMP_BRANCH -> $BRANCH)"
-                gh pr edit "$EXISTING_PR" --body "$PR_BODY"
-                echo "| \`$BRANCH\` | Updated existing PR | #$EXISTING_PR |" >> "$SUMMARY_FILE"
+                if gh pr edit "$EXISTING_PR" --body "$PR_BODY"; then
+                  echo "| \`$BRANCH\` | Updated existing PR | #$EXISTING_PR |" >> "$SUMMARY_FILE"
+                else
+                  echo "| \`$BRANCH\` | ⚠️ PR update failed | — |" >> "$SUMMARY_FILE"
+                fi
               else
                 NEW_PR=$(gh pr create \
                   --head "$TEMP_BRANCH" \
@@ -159,9 +171,15 @@ jobs:
                   --title "chore: sync development into ${BRANCH}" \
                   --body "$PR_BODY" \
                   --json number \
-                  --jq '.number')
-                echo "  Opened PR #$NEW_PR ($TEMP_BRANCH -> $BRANCH)"
-                echo "| \`$BRANCH\` | Opened PR | #$NEW_PR |" >> "$SUMMARY_FILE"
+                  --jq '.number' \
+                  || echo "")
+                if [ -n "$NEW_PR" ]; then
+                  echo "  Opened PR #$NEW_PR ($TEMP_BRANCH -> $BRANCH)"
+                  echo "| \`$BRANCH\` | Opened PR | #$NEW_PR |" >> "$SUMMARY_FILE"
+                else
+                  echo "  Failed to open PR ($TEMP_BRANCH -> $BRANCH)"
+                  echo "| \`$BRANCH\` | ⚠️ PR creation failed | — |" >> "$SUMMARY_FILE"
+                fi
               fi
             else
               # Merge conflict: abort, skip, and report
