@@ -81,6 +81,20 @@ cartService:
       cpu: 300m
       memory: 256Mi
 
+catalogService:
+  create: true
+  name: catalogservice
+  # Nombre de la tabla DynamoDB creada en terraform/aws/.
+  tableName: boutique-eq4-productos
+  awsRegion: us-east-1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
 checkoutService:
   create: true
   name: checkoutservice

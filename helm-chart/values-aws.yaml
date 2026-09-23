@@ -1,0 +1,11 @@
+# Overrides para desplegar en el cluster EKS de AWS Academy Learner Lab.
+# Uso: helm upgrade --install online-boutique ./helm-chart -f helm-chart/values-aws.yaml
+#
+# El valor real de "repository" lo pone el workflow de CI/CD en tiempo de
+# despliegue (viene del output "ecr_registry" de terraform/aws/k8s), asi que
+# aqui solo queda como referencia/placeholder.
+images:
+  repository: 809840212025.dkr.ecr.us-east-1.amazonaws.com/boutique-eq4
+
+frontend:
+  platform: aws
