@@ -1,0 +1,150 @@
+# Sync branches derived from development.
+#
+# Trigger: a Pull Request is merged INTO development.
+# For every branch B that derives from development (i.e. B's merge-base with
+# development is a commit that is NOT reachable from main, meaning B forked
+# from development's own history), merge development into B and push the
+# result directly to B (a fast-forward, since the merge contains all of B's
+# history). Branches with merge conflicts are skipped and reported in the
+# job summary; they require manual resolution.
+
+name: "Sync development into derived branches"
+
+on:
+  pull_request:
+    # run when a PR targeting development is closed
+    branches:
+      - development
+    types:
+      - closed
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'kustomize/**'
+      - '.github/workflows/kustomize-build-ci.yaml'
+      - 'terraform/**'
+      - '.github/workflows/terraform-validate-ci.yaml'
+      - 'helm-chart/**'
+      - '.github/workflows/helm-chart-ci.yaml'
+
+# Only one sync run at a time per PR target
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-branches:
+    # only when the PR was actually merged (not just closed)
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout development (post-merge)
+        uses: actions/checkout@v7
+        with:
+          ref: development
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch all remote branches
+        run: |
+          git fetch --prune origin
+          # Print the list of origin branches for debugging
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/
+
+      - name: Sync development into derived branches
+        run: |
+          set -euo pipefail
+
+          # Branches we never want to sync into
+          SKIP_PATTERN='^(main|development|release/.*|gh-pages)$'
+
+          # Collect results for the job summary
+          SUMMARY_FILE="$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Sync development into derived branches"
+            echo ""
+            echo "Source: \`development\` @ $(git rev-parse --short origin/development)"
+            echo ""
+            echo "| Branch | Status | Notes |"
+            echo "| --- | --- | --- |"
+          } >> "$SUMMARY_FILE"
+
+          # Iterate over the branch heads that exist on origin. ls-remote
+          # returns real branches only, so the origin/HEAD symref, upstream/*
+          # and local refs are never picked up.
+          for BRANCH in $(git ls-remote --heads origin | sed 's|.*refs/heads/||'); do
+            # Skip protected branches
+            if [[ "$BRANCH" =~ $SKIP_PATTERN ]]; then
+              continue
+            fi
+
+            # Skip sync/* temp branches created by this very workflow
+            if [[ "$BRANCH" == sync/* ]]; then continue; fi
+
+            echo "::group::Branch: $BRANCH"
+
+            # Verify the branch derives from development: its merge-base with
+            # development must be a commit that is not reachable from main.
+            # (A branch forked from main shares a merge-base that IS in main.)
+            MB_DEV=$(git merge-base origin/development "origin/$BRANCH" || true)
+            if [ -z "$MB_DEV" ]; then
+              echo "  $BRANCH shares no history with development. Skipping."
+              echo "| \`$BRANCH\` | Skipped (unrelated history) | — |" >> "$SUMMARY_FILE"
+              echo "::endgroup::"
+              continue
+            fi
+            if git merge-base --is-ancestor "$MB_DEV" origin/main; then
+              echo "  $BRANCH does NOT derive from development (fork point is reachable from main). Skipping."
+              echo "| \`$BRANCH\` | Skipped (not derived from development) | — |" >> "$SUMMARY_FILE"
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Check if branch is already up to date with development
+            if [ "$(git rev-parse origin/development)" = "$MB_DEV" ]; then
+              # development HEAD is reachable from B => B already contains everything in development
+              echo "  $BRANCH is already up to date with development. Skipping."
+              echo "| \`$BRANCH\` | Already up to date | — |" >> "$SUMMARY_FILE"
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Create a temp branch from B and merge development into it
+            TEMP_BRANCH="sync/development-to-${BRANCH//\//-}"
+            git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+            git checkout -b "$TEMP_BRANCH" "origin/$BRANCH"
+
+            if git merge --no-edit --no-ff origin/development; then
+              # No conflicts: push the merged result straight onto the target
+              # branch. This is a fast-forward for B (the temp branch contains
+              # all of B's history plus the merge), so no force is needed.
+              if git push origin "HEAD:refs/heads/$BRANCH"; then
+                echo "  $BRANCH synced with development."
+                echo "| \`$BRANCH\` | Synced | — |" >> "$SUMMARY_FILE"
+              else
+                echo "  Failed to push merged result to $BRANCH. Skipping."
+                echo "| \`$BRANCH\` | ⚠️ Push failed | — |" >> "$SUMMARY_FILE"
+              fi
+            else
+              # Merge conflict: abort, skip, and report
+              git merge --abort
+              echo "  $BRANCH has merge conflicts with development. Skipping (manual merge required)."
+              echo "| \`$BRANCH\` | ⚠️ Conflict — manual merge required | — |" >> "$SUMMARY_FILE"
+            fi
+
+            # Back to development for the next iteration
+            git checkout development
+            git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+            echo "::endgroup::"
+          done
+
+          echo "" >> "$SUMMARY_FILE"
+          echo "_Done. Branches marked with ⚠️ require manual conflict resolution._" >> "$SUMMARY_FILE"

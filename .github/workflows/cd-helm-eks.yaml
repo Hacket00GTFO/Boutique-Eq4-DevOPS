@@ -1,0 +1,41 @@
+name: "CD: Helm deploy a EKS"
+
+# Despliega el Helm Chart del repo al cluster EKS (terraform/aws/k8s) en cada
+# push a main. Corre despues del CI (necesita que las imagenes ya existan en
+# ECR con el tag = git sha de este mismo commit).
+#
+# Requiere los mismos secrets AWS_* que el resto de los workflows de AWS.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "helm-chart/**"
+  workflow_dispatch: {}
+
+jobs:
+  helm-deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales de AWS (Learner Lab)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Instalar Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configurar kubeconfig del cluster EKS
+        run: aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+
+      - name: Helm upgrade --install
+        run: |
+          helm upgrade --install online-boutique ./helm-chart \
+            -f helm-chart/values-aws.yaml \
+            --set images.tag=${{ github.sha }} \
+            --wait --timeout 5m

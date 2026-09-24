@@ -1,0 +1,103 @@
+<!-- Admin panel — Control de Inventario -->
+
+{{ define "admin_inventory" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">
+    {{ template "admin_sidebar" . }}
+    <div class="admin-main">
+        {{ template "admin_topbar" . }}
+        <main class="admin-content">
+
+            <div class="page-head">
+                <div>
+                    <h1>{{ .title }}</h1>
+                    <p class="page-sub">{{ .subtitle }}</p>
+                </div>
+                <div class="page-actions">
+                    <button type="button" class="btn-light"><span class="material-symbols-outlined">download</span> Export</button>
+                    <!-- TODO(backend): stock intake form / endpoint. -->
+                    <button type="button" class="btn-dark"><span class="material-symbols-outlined">add</span> Añadir Stock</button>
+                </div>
+            </div>
+
+            <section class="stats-grid stats-grid-3">
+                {{ range .page.Stats }}
+                <div class="stat-card{{ if eq .Icon "warning" }} stat-critical{{ end }}">
+                    <div class="stat-head">
+                        <span class="stat-label">{{ .Label }}</span>
+                        {{ if .Icon }}<span class="material-symbols-outlined stat-icon">{{ .Icon }}</span>{{ end }}
+                    </div>
+                    <div class="stat-value">{{ .Value }}</div>
+                    <div class="stat-foot">
+                        <canvas class="spark spark-wide" data-values="{{ joinInts .Spark "," }}"
+                            data-color="{{ if eq .Icon "warning" }}#c0392b{{ else }}#1a1a1a{{ end }}"></canvas>
+                    </div>
+                </div>
+                {{ end }}
+            </section>
+
+            <div class="toolbar">
+                <div class="tabs">
+                    <a href="{{ .baseUrl }}/admin/inventario?stock=all" class="tab{{ if eq .page.ActiveFilter "all" }} tab-active{{ end }}">All Stock</a>
+                    <a href="{{ .baseUrl }}/admin/inventario?stock=in" class="tab{{ if eq .page.ActiveFilter "in" }} tab-active{{ end }}">In Stock</a>
+                    <a href="{{ .baseUrl }}/admin/inventario?stock=low" class="tab{{ if eq .page.ActiveFilter "low" }} tab-active{{ end }}">Low Stock</a>
+                    <a href="{{ .baseUrl }}/admin/inventario?stock=out" class="tab{{ if eq .page.ActiveFilter "out" }} tab-active{{ end }}">Out of Stock</a>
+                </div>
+                <div class="page-actions">
+                    <!-- TODO(backend): warehouse list + filter from backend. -->
+                    <label class="warehouse-filter">Warehouse:
+                        <select>
+                            <option>All Locations</option>
+                            <option>NY Central</option>
+                            <option>LA Hub</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+
+            <section class="card">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Product Name</th>
+                            <th>Variant</th>
+                            <th class="num">Current Stock</th>
+                            <th>Status</th>
+                            <th>Location</th>
+                            <th class="num">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{ range .page.Items }}
+                        <tr{{ if eq .Status "Low Stock" }} class="row-low"{{ end }}>
+                            <td class="mono">{{ .SKU }}</td>
+                            <td>{{ .Product }}</td>
+                            <td class="muted">{{ .Variant }}</td>
+                            <td class="num{{ if eq .Status "Low Stock" }} stock-low{{ end }}">{{ .Stock }}</td>
+                            <td><span class="badge {{ statusClass .Status }}">{{ .Status }}</span></td>
+                            <td>{{ .Location }}</td>
+                            <!-- TODO(backend): stock adjustment endpoint. -->
+                            <td class="num"><button type="button" class="icon-btn" title="Ajustar stock"><span class="material-symbols-outlined">edit</span></button></td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+                <div class="table-foot">
+                    <span>Showing {{ .page.ShowingFrom }}-{{ .page.ShowingTo }} of {{ .page.Total }}</span>
+                    <div class="pager">
+                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">chevron_left</span></button>
+                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">chevron_right</span></button>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{{ .baseUrl }}/static/admin/admin.js"></script>
+</body>
+
+</html>
+{{ end }}
