@@ -1,0 +1,56 @@
+name: "CI: Docker build & push a ECR"
+
+# Construye la imagen Docker de cada microservicio y la sube a su
+# repositorio en Amazon ECR (creados por terraform/aws/k8s). Corre en cada
+# push a main que toque codigo fuente de algun servicio.
+#
+# Requiere los mismos secrets AWS_* que el resto de los workflows de AWS
+# (ver terraform/aws/README.md), refrescados cada sesion del Learner Lab.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+  workflow_dispatch: {}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        service:
+          - { name: adservice, context: src/adservice }
+          - { name: cartservice, context: src/cartservice/src }
+          - { name: catalogservice, context: src/catalogservice }
+          - { name: checkoutservice, context: src/checkoutservice }
+          - { name: currencyservice, context: src/currencyservice }
+          - { name: emailservice, context: src/emailservice }
+          - { name: frontend, context: src/frontend }
+          - { name: loadgenerator, context: src/loadgenerator }
+          - { name: paymentservice, context: src/paymentservice }
+          - { name: productcatalogservice, context: src/productcatalogservice }
+          - { name: recommendationservice, context: src/recommendationservice }
+          - { name: shippingservice, context: src/shippingservice }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurar credenciales de AWS (Learner Lab)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Login a ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPO: boutique-eq4/${{ matrix.service.name }}
+        run: |
+          docker build -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" ${{ matrix.service.context }}
+          docker push "$REGISTRY/$REPO:${{ github.sha }}"
+          docker push "$REGISTRY/$REPO:latest"

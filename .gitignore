@@ -17,6 +17,7 @@
 *.swp
 *.tfstate*
 *.tfvars
+tfplan
 *~
 bin/
 build/

@@ -1,3 +1,15 @@
+# El bucket de state NO se crea con el recurso "aws_s3_bucket" de Terraform.
+#
+# Razon: en AWS Academy Learner Lab, una politica de la cuenta (SCP) niega
+# el permiso "s3:GetBucketObjectLockConfiguration". El proveedor de AWS
+# intenta leer esa configuracion automaticamente cada vez que gestiona un
+# bucket S3 (en el create inicial y en cada plan/apply/refresh despues),
+# asi que cualquier bucket manejado como recurso de Terraform en esta cuenta
+# queda roto de forma permanente, no solo la primera vez.
+#
+# Por eso el bucket se crea a mano, una sola vez, con AWS CLI. Ver el
+# README.md de esta carpeta para los comandos exactos.
+
 terraform {
   required_version = ">= 1.5"
   required_providers {
@@ -10,39 +22,4 @@ terraform {
 
 provider "aws" {
   region = var.region
-}
-
-# Bucket para guardar el state de Terraform del stack principal (terraform/aws).
-# Este bootstrap se corre una sola vez, a mano, con state local (no puede
-# guardar su propio state en el bucket que todavía no existe).
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = var.state_bucket_name
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "terraform_state" {
-  bucket                  = aws_s3_bucket.terraform_state.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
 }

@@ -1,7 +1,8 @@
-name: "Deploy AWS Backend (Terraform)"
+name: "Deploy AWS Data Layer (Terraform)"
 
-# Despliega la infraestructura serverless del Admin Panel (terraform/aws)
-# a la cuenta de AWS Academy Learner Lab del equipo.
+# Despliega la capa de datos del Admin Panel (hoy: la tabla DynamoDB de
+# catalogo) a la cuenta de AWS Academy Learner Lab del equipo. El computo
+# (contenedores) vive aparte, en terraform/aws/k8s + el workflow de Helm/EKS.
 #
 # Requiere estos secrets en el repo (Settings > Secrets and variables >
 # Actions), refrescados cada vez que se reinicia la sesion del Learner Lab:
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "terraform/aws/**"
+      - "!terraform/aws/k8s/**"
   workflow_dispatch: {}
 
 jobs:
@@ -46,6 +48,3 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
-
-      - name: Mostrar URL del API
-        run: terraform output -raw api_url
