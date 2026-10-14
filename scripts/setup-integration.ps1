@@ -7,8 +7,9 @@ if (Test-Path -LiteralPath $taskEnvPath) {
 }
 function New-TaskSecret {
     $taskBytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($taskBytes)
-    return [Convert]::ToHexString($taskBytes).ToLowerInvariant()
+    $taskGenerator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $taskGenerator.GetBytes($taskBytes) } finally { $taskGenerator.Dispose() }
+    return [BitConverter]::ToString($taskBytes).Replace('-', '').ToLowerInvariant()
 }
 $taskKeys = @('POSTGRES_PASSWORD','APP_DB_PASSWORD','ADMIN_PASSWORD','ADMIN_API_TOKEN','CATALOG_READ_TOKEN','CHECKOUT_API_TOKEN')
 $taskLines = @('ADMIN_EMAIL=admin@boutique.com')

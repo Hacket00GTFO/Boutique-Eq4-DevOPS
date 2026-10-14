@@ -10,6 +10,15 @@ presentación y los microservicios del demo mantienen sus contratos gRPC.
 Desde la raíz del repo, en PowerShell:
 
 ```powershell
+./scripts/start-integration.ps1
+```
+
+El script genera `.env` si falta, valida Compose, construye e inicia ambos
+archivos y comprueba las dependencias del frontend en `/_readyz`. Funciona en
+Windows PowerShell 5.1 y PowerShell 7. Para iniciar usando imágenes ya
+construidas, agregar `-SkipBuild`. También se puede ejecutar manualmente:
+
+```powershell
 ./scripts/setup-integration.ps1
 docker compose -f docker-compose.yml -f docker-compose.admin.yml up -d --build --wait
 ```
@@ -28,7 +37,15 @@ empiezan con stock cero: agregar existencias desde Inventario.
 
 `docker-compose.yml` por sí solo conserva el modo demo original. Para trabajar
 con la integración, usar siempre ambos archivos; levantar solo el archivo base
-desactiva las conexiones nuevas. Para detener sin borrar datos:
+desactiva las conexiones nuevas.
+
+Si se ejecutó `docker compose up` con el archivo base, la advertencia de
+contenedores huérfanos puede mencionar `postgres`, `catalogservice` y `migrate`.
+Esos contenedores pertenecen a la integración: ejecutar `start-integration.ps1`
+para recuperar las conexiones. No usar `--remove-orphans` para corregir esta
+advertencia, ya que eliminaría servicios necesarios.
+
+Para detener sin borrar datos:
 
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.admin.yml stop

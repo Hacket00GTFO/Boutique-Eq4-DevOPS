@@ -49,3 +49,19 @@ TLS de un proveedor, capacidad de nodos ni permisos IAM. No hay evidencia de
 backup/restore, rendimiento con carga o comportamiento de proveedores reales.
 
 Operación, contratos y límites: [postgres-integration.md](postgres-integration.md).
+
+## Recuperación tras iniciar solo el demo
+
+El log de `docker-compose up -d --build` terminó correctamente, pero marcó
+PostgreSQL, el migrador y el backend como huérfanos. Se comprobó que frontend,
+catálogo y checkout habían perdido las variables de integración y que Redis
+carecía del volumen persistente, con cero claves en la instancia del demo.
+
+Se restauró la configuración con ambos archivos sin eliminar volúmenes.
+`scripts/start-integration.ps1` se ejecutó satisfactoriamente con construcción
+en PowerShell 7 y con `-SkipBuild` en Windows PowerShell 5.1. También se verificó
+la generación segura de credenciales en PowerShell 5.1 sin sobrescribir `.env`.
+La suite HTTP volvió a pasar sus 17 comprobaciones y `/_readyz` devolvió
+`200 ready`. Quedaron 13 servicios ejecutándose y el migrador finalizado con
+código cero; Redis volvió a montar `boutique-redis` y los tres servicios
+recuperaron sus direcciones hacia `catalogservice:8080`.
