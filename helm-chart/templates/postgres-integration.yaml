@@ -1,0 +1,151 @@
+{{- if .Values.postgresIntegration.enabled }}
+{{- if not .Values.catalogService.create }}{{ fail "postgresIntegration requires catalogService.create=true" }}{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate-{{ (.Values.images.tag | default .Chart.AppVersion) | sha256sum | trunc 8 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: boutique-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: migrate
+        image: {{ .Values.images.repository }}/{{ .Values.catalogService.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
+        command: [python, migrate.py]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresIntegration.secretName }}
+              key: MIGRATION_DATABASE_URL
+        {{- range $key := list "ADMIN_EMAIL" "ADMIN_PASSWORD" "APP_DB_PASSWORD" }}
+        - name: {{ $key }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.postgresIntegration.secretName }}
+              key: {{ $key }}
+        {{- end }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+{{- if .Values.postgresIntegration.database.create }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.postgresIntegration.database.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: boutique-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.postgresIntegration.database.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  serviceName: {{ .Values.postgresIntegration.database.name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: boutique-postgres
+  template:
+    metadata:
+      labels:
+        app: boutique-postgres
+    spec:
+      securityContext:
+        fsGroup: 70
+      containers:
+      - name: postgres
+        image: {{ .Values.postgresIntegration.database.image }}
+        env:
+        - name: POSTGRES_DB
+          value: boutique
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresIntegration.secretName }}
+              key: POSTGRES_PASSWORD
+        ports:
+        - containerPort: 5432
+        readinessProbe:
+          exec:
+            command: [pg_isready, -U, postgres, -d, boutique]
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests:
+          storage: {{ .Values.postgresIntegration.database.storage }}
+{{- end }}
+{{- if .Values.networkPolicies.create }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-api-ingress
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.catalogService.name }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values: [{{ .Values.frontend.name }}, {{ .Values.checkoutService.name }}, {{ .Values.productCatalogService.name }}]
+    ports:
+    - port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-api-egress
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values: [{{ .Values.frontend.name }}, {{ .Values.checkoutService.name }}, {{ .Values.productCatalogService.name }}]
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: {{ .Values.catalogService.name }}
+    ports:
+    - port: 8080
+{{- end }}
+{{- end }}

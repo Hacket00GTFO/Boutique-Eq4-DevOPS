@@ -40,12 +40,15 @@ class HipsterShopServer {
    */
   static ChargeServiceHandler(call, callback) {
     try {
-      logger.info(`PaymentService#Charge invoked with request ${JSON.stringify(call.request)}`);
+      logger.info('PaymentService#Charge invoked');
       const response = charge(call.request);
+      const key = call.metadata.get('idempotency-key')[0];
+      // This service simulates a payment. Stable reference across process restarts.
+      if (key) response.transaction_id = 'demo-' + require('crypto').createHash('sha256').update(String(key)).digest('hex');
       callback(null, response);
     } catch (err) {
-      console.warn(err);
-      callback(err);
+      callback({code: err.code === 400 ? grpc.status.INVALID_ARGUMENT : grpc.status.INTERNAL,
+                details: err.code === 400 ? err.message : 'Payment failed'});
     }
   }
 

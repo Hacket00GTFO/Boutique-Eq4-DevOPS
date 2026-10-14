@@ -18,9 +18,11 @@ Back-office para la tienda, diseñado primero en Figma (especificación visual c
 | **Control de Inventario** | Total de SKUs, stock crítico y embarques entrantes; filtros por disponibilidad; detalle por variante (talla/color) y almacén; alertas de stock bajo/agotado. |
 | **Gestión de Pedidos** | Historial de órdenes con cliente, fecha, monto y método de pago; estatus (entregado, enviado, pendiente, cancelado); rango de fechas y exportación de reportes; detalle por pedido. |
 
-Estado actual: diseño completo en Figma para las 4 secciones; construcción del frontend y conexión a backend en progreso.
+Estado actual: las cuatro secciones están conectadas a un backend PostgreSQL en el modo de integración. Catálogo, inventario, pedidos, dashboard y sesiones usan datos persistentes. Pago, envío y correo mantienen los simuladores del demo. Ver [arranque, pruebas y alcance](docs/postgres-integration.md).
 
 ### Arquitectura de despliegue
+
+La integración nueva usa **Docker Compose local y EKS/Helm** con PostgreSQL privado. Activación: `docker compose -f docker-compose.yml -f docker-compose.admin.yml up -d --build`, después de ejecutar `scripts/setup-integration.ps1`. En EKS se usa `helm-chart/values-postgres.yaml` y un Secret de entorno. La arquitectura ECS descrita a continuación es histórica y requiere las correcciones de red/roles documentadas en la auditoría; no activa PostgreSQL automáticamente.
 
 - **Registro de contenedores:** Amazon ECR, un repositorio por servicio bajo un prefijo compartido (`<account>.dkr.ecr.<region>.amazonaws.com/boutique/<service>`).
 - **Cómputo:** Amazon ECS con tipo de lanzamiento EC2 (Auto Scaling Group de instancias `t3.medium` como proveedor de capacidad).

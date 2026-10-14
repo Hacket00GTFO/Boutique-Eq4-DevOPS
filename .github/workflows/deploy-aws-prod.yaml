@@ -1,3 +1,4 @@
+# Historical, opt-in ECS deployment (ENABLE_ECS_DEPLOY=true). PostgreSQL uses EKS.
 # Deploy Online Boutique to AWS ECS (EC2 launch type) when a PR from
 # development is merged into main.
 #
@@ -47,7 +48,7 @@ jobs:
   # Job 1: Build and push images to ECR (parallel matrix)
   # ---------------------------------------------------------------------------
   build-and-push:
-    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'development' }}
+    if: ${{ vars.ENABLE_ECS_DEPLOY == 'true' && github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'development' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

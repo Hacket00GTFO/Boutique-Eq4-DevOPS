@@ -1,0 +1,16 @@
+services:
+  integration-tests:
+    image: catalogservice:local
+    profiles: [test]
+    command: ["sh", "-c", "python migrate.py && python -m unittest discover -s tests -v"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/boutique_test
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@boutique.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      CATALOG_READ_TOKEN: ${CATALOG_READ_TOKEN}
+      CHECKOUT_API_TOKEN: ${CHECKOUT_API_TOKEN}
+      SEED_CATALOG: "true"
+    volumes:
+      - ./src/productcatalogservice/products.json:/seed/products.json:ro

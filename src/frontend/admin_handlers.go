@@ -15,8 +15,11 @@
 package main
 
 import (
+	"crypto/hmac"
+	"github.com/google/uuid"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -38,6 +41,30 @@ var (
 			Funcs(template.FuncMap{
 			"statusClass": adminStatusClass,
 			"joinInts":    joinInts,
+			"joinSales": func(values []float64) string {
+				parts := make([]string, len(values))
+				for i, v := range values {
+					parts[i] = strconv.FormatFloat(v, 'f', 2, 64)
+				}
+				return strings.Join(parts, ",")
+			},
+			"add": func(a, b int) int { return a + b },
+			"pageURL": func(path string, q url.Values, page int) string {
+				c := url.Values{}
+				for k, v := range q {
+					c[k] = append([]string(nil), v...)
+				}
+				c.Set("page", strconv.Itoa(page))
+				return path + "?" + c.Encode()
+			},
+			"exportURL": func(q url.Values, resource string) string {
+				c := url.Values{}
+				for k, v := range q {
+					c[k] = append([]string(nil), v...)
+				}
+				c.Set("resource", resource)
+				return baseUrl + "/admin/export?" + c.Encode()
+			},
 		}).ParseGlob("templates/admin/*.html"))
 )
 
@@ -47,7 +74,10 @@ func (fe *frontendServer) adminLoginViewHandler(w http.ResponseWriter, r *http.R
 		http.Redirect(w, r, baseUrl+"/admin", http.StatusSeeOther)
 		return
 	}
+	loginCSRF := uuid.NewString()
+	http.SetCookie(w, &http.Cookie{Name: "admin_login_csrf", Value: loginCSRF, Path: baseUrl + "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: adminCookieSecure(), MaxAge: 600})
 	if err := adminTemplates.ExecuteTemplate(w, "admin_login", injectAdminData(r, map[string]interface{}{
+		"csrf_token":  loginCSRF,
 		"login_email": "",
 	})); err != nil {
 		log.Error(err)
@@ -55,9 +85,32 @@ func (fe *frontendServer) adminLoginViewHandler(w http.ResponseWriter, r *http.R
 }
 
 func (fe *frontendServer) adminLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	email := strings.TrimSpace(r.FormValue("email"))
 	password := r.FormValue("password")
+	if adminBackendEnabled() {
+		c, err := r.Cookie("admin_login_csrf")
+		if err != nil || !hmac.Equal([]byte(c.Value), []byte(r.FormValue("csrf_token"))) {
+			http.Error(w, "Token CSRF inválido", http.StatusForbidden)
+			return
+		}
+		var session struct {
+			Token string `json:"token"`
+		}
+		if err := adminAPI(r.Context(), http.MethodPost, "/api/v1/auth/login", "", map[string]string{"email": email, "password": password}, &session); err != nil {
+			if failure, ok := err.(*adminAPIError); ok && failure.Status == http.StatusUnauthorized {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = adminTemplates.ExecuteTemplate(w, "admin_login", injectAdminData(r, map[string]interface{}{"login_error": "Credenciales inválidas.", "login_email": email, "csrf_token": c.Value}))
+				return
+			}
+			adminFailure(w, r, err)
+			return
+		}
+		setAdminSessionCookie(w, session.Token)
+		http.Redirect(w, r, baseUrl+"/admin", http.StatusSeeOther)
+		return
+	}
 
 	if !checkAdminCredentials(email, password) {
 		log.WithField("email", email).Warn("admin login failed")
@@ -76,8 +129,18 @@ func (fe *frontendServer) adminLoginSubmitHandler(w http.ResponseWriter, r *http
 }
 
 func (fe *frontendServer) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if adminBackendEnabled() && r.Method != http.MethodPost {
+		http.Error(w, "Usa POST para cerrar sesión", http.StatusMethodNotAllowed)
+		return
+	}
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	if c, err := r.Cookie(adminCookieName); err == nil {
+		if adminBackendEnabled() {
+			if err := adminAPI(r.Context(), "POST", "/api/v1/auth/logout", c.Value, map[string]string{}, nil); err != nil {
+				adminFailure(w, r, err)
+				return
+			}
+		}
 		destroyAdminSession(c.Value)
 	}
 	clearAdminSessionCookie(w)
@@ -86,13 +149,18 @@ func (fe *frontendServer) adminLogoutHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (fe *frontendServer) adminDashboardHandler(w http.ResponseWriter, r *http.Request) {
+	dashboard, err := loadDashboard(r)
+	if err != nil {
+		adminFailure(w, r, err)
+		return
+	}
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	if err := adminTemplates.ExecuteTemplate(w, "admin_dashboard", injectAdminData(r, map[string]interface{}{
 		"active":             "dashboard",
 		"title":              "Dashboard",
-		"subtitle":           "Overview of your store's performance today.",
+		"subtitle":           "Resumen de ventas confirmadas y actividad de la tienda.",
 		"search_placeholder": "Search orders, products...",
-		"dashboard":          adminData.Dashboard(),
+		"dashboard":          dashboard,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -101,12 +169,17 @@ func (fe *frontendServer) adminDashboardHandler(w http.ResponseWriter, r *http.R
 func (fe *frontendServer) adminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	orders, err := loadOrders(r, page)
+	if err != nil {
+		adminFailure(w, r, err)
+		return
+	}
 	if err := adminTemplates.ExecuteTemplate(w, "admin_orders", injectAdminData(r, map[string]interface{}{
 		"active":             "pedidos",
 		"title":              "Pedidos",
 		"subtitle":           "Gestión y seguimiento de órdenes recientes.",
 		"search_placeholder": "Buscar pedidos...",
-		"page":               adminData.Orders(page, r.URL.Query().Get("range")),
+		"page":               orders,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -115,12 +188,17 @@ func (fe *frontendServer) adminOrdersHandler(w http.ResponseWriter, r *http.Requ
 func (fe *frontendServer) adminCatalogHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	products, err := loadProducts(r, page)
+	if err != nil {
+		adminFailure(w, r, err)
+		return
+	}
 	if err := adminTemplates.ExecuteTemplate(w, "admin_catalog", injectAdminData(r, map[string]interface{}{
 		"active":             "catalogo",
 		"title":              "Gestión de Catálogo",
 		"subtitle":           "Manage product listings, pricing, and availability.",
 		"search_placeholder": "Search catalog...",
-		"page":               adminData.Products(page, r.URL.Query().Get("category")),
+		"page":               products,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -129,12 +207,17 @@ func (fe *frontendServer) adminCatalogHandler(w http.ResponseWriter, r *http.Req
 func (fe *frontendServer) adminInventoryHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	inventory, err := loadInventory(r, page)
+	if err != nil {
+		adminFailure(w, r, err)
+		return
+	}
 	if err := adminTemplates.ExecuteTemplate(w, "admin_inventory", injectAdminData(r, map[string]interface{}{
 		"active":             "inventario",
 		"title":              "Control de Inventario",
 		"subtitle":           "Manage stock levels across all warehouses.",
 		"search_placeholder": "Search inventory...",
-		"page":               adminData.Inventory(page, r.URL.Query().Get("stock")),
+		"page":               inventory,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -142,8 +225,12 @@ func (fe *frontendServer) adminInventoryHandler(w http.ResponseWriter, r *http.R
 
 func injectAdminData(r *http.Request, payload map[string]interface{}) map[string]interface{} {
 	data := map[string]interface{}{
-		"baseUrl":    baseUrl,
-		"request_id": r.Context().Value(ctxKeyRequestID{}),
+		"path":            r.URL.Path,
+		"backend_enabled": adminBackendEnabled(),
+		"csrf_token":      csrfForSession(adminSession(r)),
+		"query":           r.URL.Query(),
+		"baseUrl":         baseUrl,
+		"request_id":      r.Context().Value(ctxKeyRequestID{}),
 	}
 	for k, v := range payload {
 		data[k] = v

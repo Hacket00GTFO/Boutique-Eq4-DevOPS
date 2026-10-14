@@ -33,6 +33,7 @@
         {{ end }}
 
         <form method="POST" action="{{ .baseUrl }}/admin/login" class="login-form">
+            <input type="hidden" name="csrf_token" value="{{ .csrf_token }}">
             <label for="email">Email</label>
             <input type="email" id="email" name="email" required autocomplete="username"
                 placeholder="admin@boutique.com" value="{{ .login_email }}">

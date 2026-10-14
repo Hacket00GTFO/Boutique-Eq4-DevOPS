@@ -82,18 +82,27 @@ cartService:
       memory: 256Mi
 
 catalogService:
-  create: true
+  create: false
   name: catalogservice
-  # Nombre de la tabla DynamoDB creada en terraform/aws/.
-  tableName: boutique-eq4-productos
-  awsRegion: us-east-1
   resources:
     requests:
       cpu: 100m
-      memory: 64Mi
-    limits:
-      cpu: 200m
       memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Opt-in PostgreSQL backend; secret contents are documented in docs/postgres-integration.md.
+postgresIntegration:
+  enabled: false
+  secretName: boutique-integration
+  cookieSecure: true
+  databaseCIDR: ""
+  database:
+    create: false
+    name: postgres
+    image: postgres:17-alpine
+    storage: 5Gi
 
 checkoutService:
   create: true

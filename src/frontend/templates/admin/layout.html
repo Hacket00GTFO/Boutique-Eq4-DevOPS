@@ -53,20 +53,20 @@
             <span class="material-symbols-outlined">settings</span>
             <span>Ajustes</span>
         </a>
-        <a href="{{ .baseUrl }}/admin/logout" class="nav-item">
-            <span class="material-symbols-outlined">logout</span>
-            <span>Cerrar sesión</span>
-        </a>
+        {{ if .backend_enabled }}
+        <form method="POST" action="{{ .baseUrl }}/admin/logout"><input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><button class="nav-item" type="submit">Cerrar sesión</button></form>
+        {{ else }}<a href="{{ .baseUrl }}/admin/logout" class="nav-item">Cerrar sesión</a>{{ end }}
     </div>
 </aside>
 {{ end }}
 
 {{ define "admin_topbar" }}
 <header class="admin-topbar">
-    <div class="topbar-search">
+    <form method="GET" action="{{ .path }}" class="topbar-search">
         <span class="material-symbols-outlined">search</span>
-        <input type="search" placeholder="{{ .search_placeholder }}">
-    </div>
+        <input type="search" name="q" value="{{ .query.Get "q" }}" placeholder="Buscar...">
+        <button type="submit" class="btn-light">Buscar</button>
+    </form>
     <div class="topbar-actions">
         <button type="button" class="icon-btn" title="Notificaciones">
             <span class="material-symbols-outlined">notifications</span>

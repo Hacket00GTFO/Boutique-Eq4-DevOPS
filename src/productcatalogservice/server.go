@@ -135,7 +135,11 @@ func run(port string) string {
 		grpc.StatsHandler(otelgrpc.NewServerHandler()))
 
 	svc := &productCatalog{}
-	err = loadCatalog(&svc.catalog)
+	if os.Getenv("CATALOG_API_BASE_URL") != "" {
+		_, err = readCatalogAPI(context.Background())
+	} else {
+		err = loadCatalog(&svc.catalog)
+	}
 	if err != nil {
 		log.Fatalf("could not parse product catalog: %v", err)
 	}

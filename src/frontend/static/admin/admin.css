@@ -398,3 +398,11 @@ body {
     .stats-grid-4, .stats-grid-3 { grid-template-columns: 1fr; }
     .topbar-search { width: auto; flex: 1; }
 }
+/* Forms wired to the administrative API. */
+.admin-edit-form {padding:24px;display:grid;gap:16px;max-width:850px;}
+.admin-edit-form label {display:grid;gap:7px;font-size:14px;}
+.admin-edit-form input,.admin-edit-form textarea,.admin-edit-form select,.stock-adjust input {padding:10px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#252525;font:inherit;}
+.stock-adjust {display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.stock-adjust input[type=number] {width:90px;}
+.admin-table td form {margin:0;}
+.card {overflow-x:auto;}

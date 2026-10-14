@@ -1,0 +1,13 @@
+{{ define "admin_order_detail" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}<main class="admin-content">
+<h1>Pedido {{ .order.ID }}</h1><p>{{ .order.Date }} · {{ .order.Customer }}</p>
+<section class="card admin-edit-form"><p>Total: {{ .order.Total }}</p><p>Estado: {{ .order.Status }} · {{ .order.State }}</p><p>Pago: {{ .order.PaymentMethod }}</p><p>Referencia: {{ .order.TransactionID }}</p>
+<table class="admin-table"><thead><tr><th>SKU</th><th>Producto</th><th>Cantidad</th><th>Precio</th></tr></thead><tbody>{{ range .order.Items }}<tr><td>{{ .SKU }}</td><td>{{ .Name }}</td><td>{{ .Quantity }}</td><td>{{ .Price }}</td></tr>{{ end }}</tbody></table>
+{{ if and (eq .order.State "confirmed") (eq .order.Status "ENVIADO") }}<form method="POST" action="{{ .baseUrl }}/admin/pedidos/status"><input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><input type="hidden" name="id" value="{{ .order.ID }}"><input type="hidden" name="status" value="ENTREGADO"><button type="submit" class="btn-dark">Marcar entregado</button></form>{{ end }}
+{{ with .order.Result }}<p>Tracking: {{ .shippingTrackingId }}</p>{{ with .shippingAddress }}<p>Entrega: {{ .streetAddress }}, {{ .city }}, {{ .state }}, {{ .country }}</p>{{ end }}{{ end }}
+{{ if or (eq .order.State "charging") (eq .order.State "payment_unknown") }}
+<form method="POST" action="{{ .baseUrl }}/admin/pedidos/reconcile" class="admin-edit-form"><input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><input type="hidden" name="id" value="{{ .order.ID }}"><p>Conciliar únicamente después de verificar el resultado del pago. Disponible tras 5 minutos.</p><label>Resultado verificado<select name="state"><option value="failed">Pago no realizado</option><option value="paid">Pago confirmado</option></select></label><label>Referencia si se pagó<input name="transaction_id"></label><label>Evidencia / motivo<input name="reason" required minlength="6"></label><label><input type="checkbox" name="verified" value="true" required> Verifiqué el resultado del pago</label><button class="btn-dark">Guardar conciliación</button></form>
+{{ end }}
+<a class="btn-light" href="{{ .baseUrl }}/admin/pedidos">Volver a pedidos</a></section></main></div></div></body></html>
+{{ end }}
