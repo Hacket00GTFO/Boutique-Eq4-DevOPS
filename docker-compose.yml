@@ -3,7 +3,8 @@
 #
 # Uso:
 #   ./scripts/start-integration.ps1           # integración con PostgreSQL y panel persistente
-#   docker-compose up -d --build              # solo demo (sin PostgreSQL ni panel persistente)
+#   docker-compose up -d --build              # integración (carga docker-compose.override.yml)
+#   docker compose -f docker-compose.yml up -d # demo mock explícito, sin PostgreSQL
 #   docker-compose --profile loadgen up -d --build   # incluye el generador de carga
 #   docker-compose --profile assistant up -d --build # incluye shopping-assistant (requiere GCP)
 #

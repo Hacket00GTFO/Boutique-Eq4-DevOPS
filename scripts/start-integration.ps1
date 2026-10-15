@@ -33,6 +33,8 @@ try {
     }
     if (-not $taskReady) { throw 'Containers started, but frontend dependencies are not ready at http://localhost:8080/_readyz.' }
 
+    & (Join-Path $PSScriptRoot 'check-integration.ps1')
+
     Write-Output 'PostgreSQL integration ready: http://localhost:8080/admin/login'
     Write-Output 'Use ADMIN_EMAIL and ADMIN_PASSWORD from .env to sign in.'
 } finally {

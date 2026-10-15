@@ -1,0 +1,34 @@
+# Loaded automatically by `docker compose up` and `docker-compose up`.
+# Reuse the explicit PostgreSQL extension so both startup paths stay identical.
+services:
+  postgres:
+    extends:
+      file: docker-compose.admin.yml
+      service: postgres
+  migrate:
+    extends:
+      file: docker-compose.admin.yml
+      service: migrate
+  catalogservice:
+    extends:
+      file: docker-compose.admin.yml
+      service: catalogservice
+  productcatalogservice:
+    extends:
+      file: docker-compose.admin.yml
+      service: productcatalogservice
+  checkoutservice:
+    extends:
+      file: docker-compose.admin.yml
+      service: checkoutservice
+  frontend:
+    extends:
+      file: docker-compose.admin.yml
+      service: frontend
+  redis-cart:
+    extends:
+      file: docker-compose.admin.yml
+      service: redis-cart
+volumes:
+  boutique-postgres:
+  boutique-redis:

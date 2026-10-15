@@ -27,7 +27,7 @@ incidencias y entrega, con historial persistente. [Guía de uso del demo](docs/d
 
 ### Arquitectura de despliegue
 
-La integración nueva usa **Docker Compose local y EKS/Helm** con PostgreSQL privado. Activación en PowerShell: `./scripts/start-integration.ps1`; genera las credenciales locales si faltan, inicia ambos archivos de Compose y verifica la disponibilidad del frontend. `docker compose up` por sí solo inicia el demo sin PostgreSQL. En EKS se usa `helm-chart/values-postgres.yaml` y un Secret de entorno. La arquitectura ECS descrita a continuación es histórica y requiere las correcciones de red/roles documentadas en la auditoría; no activa PostgreSQL automáticamente.
+La integración nueva usa **Docker Compose local y EKS/Helm** con PostgreSQL privado. Activación en PowerShell: `./scripts/start-integration.ps1`; genera las credenciales locales si faltan, inicia ambos archivos de Compose y verifica las imágenes, la configuración activa y la disponibilidad del frontend. Con `.env` configurado, `docker compose up -d --build` también inicia la integración: carga automáticamente `docker-compose.override.yml`, que reutiliza `docker-compose.admin.yml`. En EKS se usa `helm-chart/values-postgres.yaml` y un Secret de entorno. La arquitectura ECS descrita a continuación es histórica y requiere las correcciones de red/roles documentadas en la auditoría; no activa PostgreSQL automáticamente.
 
 - **Registro de contenedores:** Amazon ECR, un repositorio por servicio bajo un prefijo compartido (`<account>.dkr.ecr.<region>.amazonaws.com/boutique/<service>`).
 - **Cómputo:** Amazon ECS con tipo de lanzamiento EC2 (Auto Scaling Group de instancias `t3.medium` como proveedor de capacidad).

@@ -20,7 +20,7 @@ construidas, agregar `-SkipBuild`. También se puede ejecutar manualmente:
 
 ```powershell
 ./scripts/setup-integration.ps1
-docker compose -f docker-compose.yml -f docker-compose.admin.yml up -d --build --wait
+docker compose up -d --build --wait
 ```
 
 Tienda: `http://localhost:8080`. Administración:
@@ -35,9 +35,13 @@ importa los nueve productos existentes con 100 unidades de stock de demo cada
 uno; no sobrescribe productos modificados en reinicios. Los nuevos productos
 empiezan con stock cero: agregar existencias desde Inventario.
 
-`docker-compose.yml` por sí solo conserva el modo demo original. Para trabajar
-con la integración, usar siempre ambos archivos; levantar solo el archivo base
-desactiva las conexiones nuevas.
+El comando normal carga automáticamente `docker-compose.override.yml`, que
+reutiliza las definiciones de `docker-compose.admin.yml`. Se comprobó que el
+modelo resultante es idéntico al de indicar ambos archivos con `-f`.
+
+Solo el arranque explícito `docker compose -f docker-compose.yml up -d` conserva
+el modo mock original. Ese comando omite los archivos de integración y oculta
+los botones que necesitan PostgreSQL.
 
 Si se ejecutó `docker compose up` con el archivo base, la advertencia de
 contenedores huérfanos puede mencionar `postgres`, `catalogservice` y `migrate`.
@@ -54,6 +58,18 @@ docker compose -f docker-compose.yml -f docker-compose.admin.yml stop
 Los volúmenes `boutique-postgres` y `boutique-redis` conservan datos al recrear
 contenedores. `down -v` borra esos datos y no debe usarse para un reinicio normal.
 PostgreSQL y el backend administrativo no publican puertos al host.
+
+Para verificar el contenedor activo y sus archivos:
+
+```powershell
+./scripts/check-integration.ps1 -VerifyFrontendFiles
+```
+
+Comprueba imágenes actuales, variables de conexión en frontend/catálogo/checkout,
+readiness con PostgreSQL y hashes SHA256 de plantillas, CSS y JavaScript del
+contenedor frente al workspace. No muestra contraseñas ni tokens. Las imágenes
+actualizadas por sí solas no activan el backend: también debe coincidir la
+configuración del contenedor.
 
 ## Responsabilidades y comunicación
 

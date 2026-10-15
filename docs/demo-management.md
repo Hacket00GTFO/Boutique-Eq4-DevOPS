@@ -14,6 +14,11 @@ Abrir http://localhost:8080/admin/login y usar `ADMIN_EMAIL` / `ADMIN_PASSWORD`
 del archivo local `.env`. El arranque aplica la migración `002_demo_shipments.sql`
 sin eliminar productos ni pedidos anteriores.
 
+Con las credenciales ya configuradas, `docker compose up -d --build` también
+activa este modo mediante `docker-compose.override.yml`. Para revisar la
+configuración y comprobar que las plantillas y recursos del contenedor coinciden
+con el código local, ejecutar `.\scripts\check-integration.ps1 -VerifyFrontendFiles`.
+
 ## Cargar ejemplos
 
 El botón **Cargar datos demo** está en Dashboard, Catálogo, Inventario y Pedidos.

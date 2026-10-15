@@ -16,7 +16,10 @@ jobs:
       shell: pwsh
       run: ./scripts/setup-integration.ps1
     - name: Build and start integration
-      run: docker compose -f docker-compose.yml -f docker-compose.admin.yml up -d --build --wait --wait-timeout 180
+      run: docker compose up -d --build --wait --wait-timeout 180
+    - name: Verify running frontend image and integration
+      shell: pwsh
+      run: ./scripts/check-integration.ps1 -VerifyFrontendFiles
     - name: PostgreSQL transaction tests
       shell: pwsh
       run: ./scripts/test-integration.ps1
@@ -31,4 +34,4 @@ jobs:
         helm template boutique ./helm-chart -f helm-chart/values-postgres.yaml --set postgresIntegration.database.create=true >/dev/null
     - name: Cleanup test environment
       if: always()
-      run: docker compose -f docker-compose.yml -f docker-compose.admin.yml down -v
+      run: docker compose down -v
