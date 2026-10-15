@@ -1,0 +1,8 @@
+catalogService:
+  create: true
+postgresIntegration:
+  enabled: true
+  secretName: boutique-integration
+  cookieSecure: true
+  database:
+    create: false # use a private external PostgreSQL instance by default

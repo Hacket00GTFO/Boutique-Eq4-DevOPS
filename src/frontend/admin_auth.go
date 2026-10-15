@@ -82,6 +82,9 @@ func validAdminSession(r *http.Request) bool {
 	if err != nil || c.Value == "" {
 		return false
 	}
+	if adminBackendEnabled() {
+		return adminAPI(r.Context(), "GET", "/api/v1/auth/me", c.Value, nil, nil) == nil
+	}
 	adminSessionsMu.Lock()
 	defer adminSessionsMu.Unlock()
 	exp, ok := adminSessions[c.Value]
@@ -103,6 +106,7 @@ func setAdminSessionCookie(w http.ResponseWriter, token string) {
 		MaxAge:   int(adminSessionTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   adminCookieSecure(),
 		// TODO(backend): set Secure: true once served over HTTPS.
 	})
 }
@@ -115,16 +119,33 @@ func clearAdminSessionCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   adminCookieSecure(),
 	})
 }
 
 // requireAdminAuth guards all /admin/* routes except /admin/login.
 func requireAdminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if adminBackendEnabled() {
+			if adminSession(r) == "" {
+				http.Redirect(w, r, baseUrl+"/admin/login", http.StatusSeeOther)
+				return
+			}
+			if err := adminAPI(r.Context(), "GET", "/api/v1/auth/me", adminSession(r), nil, nil); err != nil {
+				adminFailure(w, r, err)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !validAdminSession(r) {
 			http.Redirect(w, r, baseUrl+"/admin/login", http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func adminCookieSecure() bool {
+	return os.Getenv("ADMIN_COOKIE_SECURE") != "false" && adminBackendEnabled()
 }

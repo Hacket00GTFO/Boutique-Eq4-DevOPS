@@ -1,0 +1,37 @@
+name: PostgreSQL integration
+on:
+  pull_request:
+    paths: ["src/**", "docker-compose*.yml", "scripts/**", "helm-chart/**", ".github/workflows/ci-postgres-integration.yaml"]
+  workflow_dispatch: {}
+  workflow_call: {}
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@v7
+    - name: Create isolated local credentials
+      shell: pwsh
+      run: ./scripts/setup-integration.ps1
+    - name: Build and start integration
+      run: docker compose up -d --build --wait --wait-timeout 180
+    - name: Verify running frontend image and integration
+      shell: pwsh
+      run: ./scripts/check-integration.ps1 -VerifyFrontendFiles
+    - name: PostgreSQL transaction tests
+      shell: pwsh
+      run: ./scripts/test-integration.ps1
+    - name: Frontend and checkout integration
+      shell: pwsh
+      run: ./scripts/test-storefront-integration.ps1
+    - name: Helm lint
+      uses: azure/setup-helm@v4
+    - name: Validate base and PostgreSQL charts
+      run: |
+        helm lint ./helm-chart
+        helm template boutique ./helm-chart -f helm-chart/values-postgres.yaml --set postgresIntegration.database.create=true >/dev/null
+    - name: Cleanup test environment
+      if: always()
+      run: docker compose down -v

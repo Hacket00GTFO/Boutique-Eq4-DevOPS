@@ -1,9 +1,16 @@
 # Panel de Administración (Apparel Admin)
 
 Panel back-office servido por el servicio Go existente `src/frontend` bajo
-las rutas `/admin/*`. **Fase actual: solo frontend** — todos los datos son
-mock y la autenticación es una cuenta hardcodeada. Este documento describe la
-estructura y el contrato para la futura integración del backend.
+las rutas `/admin/*`. **Modo integrado disponible:** PostgreSQL, API administrativa,
+catálogo compartido, reservas de inventario, pedidos y sesiones persistentes.
+Ver [la implementación y sus pruebas](postgres-integration.md).
+
+Las secciones siguientes conservan la referencia del **modo demo** (Compose base),
+con mocks y credenciales de demo; esas credenciales no aplican al modo integrado.
+
+La auditoría del 13 de octubre de 2026 y la planeación de integración con
+PostgreSQL están en [backend-integration-plan.md](backend-integration-plan.md),
+con [evidencia de las pruebas locales](integration-audit-2026-10-13.md).
 
 ## Acceso (demo)
 

@@ -31,6 +31,9 @@ type productCatalog struct {
 }
 
 func (p *productCatalog) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+	if _, err := p.products(ctx); err != nil {
+		return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_NOT_SERVING}, nil
+	}
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
@@ -38,16 +41,20 @@ func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Hea
 	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
 }
 
-func (p *productCatalog) ListProducts(context.Context, *pb.Empty) (*pb.ListProductsResponse, error) {
+func (p *productCatalog) ListProducts(ctx context.Context, _ *pb.Empty) (*pb.ListProductsResponse, error) {
 	time.Sleep(extraLatency)
 
-	return &pb.ListProductsResponse{Products: p.parseCatalog()}, nil
+	products, err := p.products(ctx)
+	return &pb.ListProductsResponse{Products: products}, err
 }
 
 func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductRequest) (*pb.Product, error) {
 	time.Sleep(extraLatency)
 
-	catalog := p.parseCatalog()
+	catalog, err := p.products(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, product := range catalog {
 		if req.Id == product.Id {
 			return product, nil
@@ -61,7 +68,11 @@ func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProdu
 	time.Sleep(extraLatency)
 
 	var ps []*pb.Product
-	for _, product := range p.parseCatalog() {
+	products, err := p.products(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, product := range products {
 		if strings.Contains(strings.ToLower(product.Name), strings.ToLower(req.Query)) ||
 			strings.Contains(strings.ToLower(product.Description), strings.ToLower(req.Query)) {
 			ps = append(ps, product)

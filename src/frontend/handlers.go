@@ -28,9 +28,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/frontend/genproto"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/money"
@@ -232,7 +236,7 @@ func (fe *frontendServer) addToCartHandler(w http.ResponseWriter, r *http.Reques
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to add to cart"), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("location", baseUrl + "/cart")
+	w.Header().Set("location", baseUrl+"/cart")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -244,7 +248,7 @@ func (fe *frontendServer) emptyCartHandler(w http.ResponseWriter, r *http.Reques
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to empty cart"), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("location", baseUrl + "/")
+	w.Header().Set("location", baseUrl+"/")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -304,6 +308,7 @@ func (fe *frontendServer) viewCartHandler(w http.ResponseWriter, r *http.Request
 	year := time.Now().Year()
 
 	if err := templates.ExecuteTemplate(w, "cart", injectCommonTemplateData(r, map[string]interface{}{
+		"checkout_key":     uuid.NewString(),
 		"currencies":       currencies,
 		"recommendations":  recommendations,
 		"cart_size":        cartSize(cart),
@@ -351,8 +356,15 @@ func (fe *frontendServer) placeOrderHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	checkoutKey := r.FormValue("checkout_key")
+	if checkoutKey == "" {
+		checkoutKey = uuid.NewString()
+	}
+	checkoutCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	checkoutCtx = metadata.AppendToOutgoingContext(checkoutCtx, "idempotency-key", checkoutKey)
 	order, err := pb.NewCheckoutServiceClient(fe.checkoutSvcConn).
-		PlaceOrder(r.Context(), &pb.PlaceOrderRequest{
+		PlaceOrder(checkoutCtx, &pb.PlaceOrderRequest{
 			Email: payload.Email,
 			CreditCard: &pb.CreditCardInfo{
 				CreditCardNumber:          payload.CcNumber,
@@ -423,7 +435,7 @@ func (fe *frontendServer) logoutHandler(w http.ResponseWriter, r *http.Request) 
 		c.MaxAge = -1
 		http.SetCookie(w, c)
 	}
-	w.Header().Set("Location", baseUrl + "/")
+	w.Header().Set("Location", baseUrl+"/")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -462,7 +474,13 @@ func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request)
 	var response LLMResponse
 
 	url := "http://" + fe.shoppingAssistantSvcAddr
-	req, err := http.NewRequest(http.MethodPost, url, r.Body)
+	if !assistantEnabled {
+		http.Error(w, "Asistente deshabilitado", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, r.Body)
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
 		return
@@ -474,8 +492,13 @@ func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request)
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to send request"), http.StatusInternalServerError)
 		return
 	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		http.Error(w, "Asistente no disponible", http.StatusBadGateway)
+		return
+	}
 
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to read response"), http.StatusInternalServerError)
 		return
@@ -534,6 +557,18 @@ func (fe *frontendServer) chooseAd(ctx context.Context, ctxKeys []string, log lo
 }
 
 func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWriter, err error, code int) {
+	switch status.Code(errors.Cause(err)) {
+	case codes.NotFound:
+		code = http.StatusNotFound
+	case codes.InvalidArgument:
+		code = http.StatusUnprocessableEntity
+	case codes.Aborted, codes.FailedPrecondition:
+		code = http.StatusConflict
+	case codes.Unavailable:
+		code = http.StatusServiceUnavailable
+	case codes.DeadlineExceeded:
+		code = http.StatusGatewayTimeout
+	}
 	log.WithField("error", err).Error("request error")
 	errMsg := fmt.Sprintf("%+v", err)
 

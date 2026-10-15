@@ -6,18 +6,25 @@ name: "CD: Helm deploy a EKS"
 #
 # Requiere los mismos secrets AWS_* que el resto de los workflows de AWS.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI: Docker build & push a ECR"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "src/**"
-      - "helm-chart/**"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "SHA completo de una release ya construida en ECR"
+        required: true
+        type: string
 
 jobs:
   helm-deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.image_tag }}
 
       - name: Configurar credenciales de AWS (Learner Lab)
         uses: aws-actions/configure-aws-credentials@v4
@@ -30,12 +37,29 @@ jobs:
       - name: Instalar Helm
         uses: azure/setup-helm@v4
 
+      - name: Resolver registro ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Configurar kubeconfig del cluster EKS
         run: aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
 
       - name: Helm upgrade --install
+        env:
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || inputs.image_tag }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ENABLE_POSTGRES: ${{ vars.ENABLE_POSTGRES_INTEGRATION || 'false' }}
         run: |
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "Se requiere un SHA válido"; exit 1; }
+          POSTGRES_ARGS=()
+          if [[ "$ENABLE_POSTGRES" == "true" ]]; then
+            kubectl get secret boutique-integration >/dev/null
+            POSTGRES_ARGS=(-f helm-chart/values-postgres.yaml)
+          fi
           helm upgrade --install online-boutique ./helm-chart \
             -f helm-chart/values-aws.yaml \
-            --set images.tag=${{ github.sha }} \
-            --wait --timeout 5m
+            "${POSTGRES_ARGS[@]}" \
+            --set-string images.repository="$ECR_REGISTRY/boutique-eq4" \
+            --set-string images.tag="$IMAGE_TAG" \
+            --atomic --wait --wait-for-jobs --timeout 10m

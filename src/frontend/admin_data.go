@@ -42,6 +42,13 @@ type AdminTopProduct struct {
 }
 
 type AdminOrder struct {
+	Demo          bool
+	CustomerName  string
+	ShippingCost  string
+	Shipment      AdminShipment
+	Result        map[string]interface{}
+	State         string
+	TransactionID string
 	ID            string
 	Date          string
 	Customer      string
@@ -52,15 +59,30 @@ type AdminOrder struct {
 	Status        string // ENTREGADO | ENVIADO | PENDIENTE | CANCELADO | Active | Shipped | Pending
 }
 
+type AdminShipment struct {
+	Version                                       int
+	Carrier, TrackingID, Notes, EstimatedDelivery string
+}
+
 type AdminProduct struct {
-	Name     string
-	Category string
-	Price    string
-	Status   string // Active | Inactive
-	ImgURL   string
+	ID          string
+	SKU         string
+	Description string
+	PriceValue  string
+	Variant     string
+	Location    string
+	Version     int
+	Name        string
+	Category    string
+	Price       string
+	Status      string // Active | Inactive
+	ImgURL      string
 }
 
 type AdminInventoryItem struct {
+	ID       string
+	Reserved int
+	OnHand   int
 	SKU      string
 	Product  string
 	Variant  string
@@ -71,12 +93,14 @@ type AdminInventoryItem struct {
 
 type AdminDashboardData struct {
 	Stats        []AdminStatCard
-	MonthlySales []int // 12 bars, normalized 0-100
+	MonthlySales []float64 // USD totals by calendar month
 	TopProducts  []AdminTopProduct
 	RecentOrders []AdminOrder
 }
 
 type AdminOrdersPage struct {
+	CurrentPage int
+	TotalPages  int
 	Orders      []AdminOrder
 	DateRange   string // e.g. "01 Oct - 31 Oct"
 	ShowingFrom int
@@ -85,16 +109,20 @@ type AdminOrdersPage struct {
 }
 
 type AdminCatalogPage struct {
-	Products       []AdminProduct
-	ActiveCategory string
-	ShowingFrom    int
-	ShowingTo      int
-	Total          int
-	CurrentPage    int
-	TotalPages     int
+	CategoryOptions []string
+	Products        []AdminProduct
+	ActiveCategory  string
+	ShowingFrom     int
+	ShowingTo       int
+	Total           int
+	CurrentPage     int
+	TotalPages      int
 }
 
 type AdminInventoryPage struct {
+	CurrentPage  int
+	TotalPages   int
+	Warehouses   []string
 	Stats        []AdminStatCard
 	Items        []AdminInventoryItem
 	ActiveFilter string
@@ -129,7 +157,7 @@ func (mockAdminData) Dashboard() AdminDashboardData {
 				Spark: []int{60, 50, 55, 40, 45, 30, 35}},
 			{Label: "ACTIVE DISCOUNTS", Value: "12", Icon: "sell", SubLabel: "Active Campaigns"},
 		},
-		MonthlySales: []int{40, 65, 30, 85, 50, 70, 60, 90, 55, 75, 95, 100},
+		MonthlySales: []float64{40, 65, 30, 85, 50, 70, 60, 90, 55, 75, 95, 100},
 		TopProducts: []AdminTopProduct{
 			{Name: "Merino Wool Sweater", SKU: "MW-092-GRY", Sales: 124, ImgURL: "/static/img/products/tank-top.jpg"},
 			{Name: "Structured Leather Tote", SKU: "BG-LT-BLK", Sales: 98, ImgURL: "/static/img/products/loafers.jpg"},
