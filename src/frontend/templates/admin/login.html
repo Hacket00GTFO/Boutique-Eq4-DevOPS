@@ -43,7 +43,7 @@
             <button type="submit" class="btn-dark login-submit">Entrar</button>
         </form>
 
-        <p class="login-hint">Cuenta demo: <code>admin@boutique.com</code> / <code>admin123</code></p>
+        {{ if .backend_enabled }}<p class="login-hint">Usa la cuenta administrativa configurada para este entorno.</p>{{ else }}<p class="login-hint">Cuenta demo: <code>admin@boutique.com</code> / <code>admin123</code></p>{{ end }}
     </main>
 </body>
 

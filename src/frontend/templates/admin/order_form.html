@@ -1,0 +1,20 @@
+{{ define "admin_order_form" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}<main class="admin-content">
+<div class="page-head"><div><h1>Crear pedido demo</h1><p class="page-sub">Compra simulada en USD. Se descuentan existencias y el envío queda pendiente.</p></div><a class="btn-light" href="{{ .baseUrl }}/admin/pedidos">Volver a pedidos</a></div>
+{{ if .products }}
+<form method="POST" action="{{ .baseUrl }}/admin/pedidos/create-demo" class="card admin-edit-form order-create-form">
+<input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><input type="hidden" name="order_key" value="{{ .order_key }}">
+<h2>Cliente y entrega</h2><div class="form-grid">
+<label>Nombre del cliente<input name="customer_name" required maxlength="128" placeholder="Ana Demo"></label><label>Correo<input type="email" name="email" required maxlength="254" placeholder="ana@example.invalid"></label>
+<label class="span-2">Dirección<input name="street_address" required maxlength="255" placeholder="Av. Demo 123"></label>
+<label>Ciudad<input name="city" required maxlength="255"></label><label>Estado<input name="state" required maxlength="255"></label>
+<label>País<input name="country" value="México" required maxlength="255"></label><label>Código postal<input name="zip_code" required maxlength="255"></label></div>
+<h2>Productos</h2><p class="page-sub">Precios y existencias se validan al guardar el pedido.</p>
+<div id="order-items"><div class="order-item-row"><label>Producto<select name="product_id" required><option value="">Seleccionar producto</option>{{ range .products }}<option value="{{ .ID }}">{{ .Name }} · {{ .SKU }} · {{ .Price }} · {{ .Available }} disponibles</option>{{ end }}</select></label><label>Cantidad<input type="number" name="quantity" value="1" min="1" max="100" required></label><button type="button" class="btn-light remove-order-item" aria-label="Quitar producto">Quitar</button></div></div>
+<button type="button" class="btn-light" id="add-order-item">Añadir otro producto</button>
+<label>Costo de envío USD<input type="number" name="shipping_fee" value="5.00" min="0" step="0.01" required></label>
+<div class="page-actions"><button type="submit" class="btn-dark">Crear pedido y descontar stock</button><a class="btn-light" href="{{ .baseUrl }}/admin/pedidos">Cancelar</a></div></form>
+{{ else }}<section class="card admin-edit-form"><h2>No hay productos con existencias</h2><p>Carga los datos demo o registra productos y una entrada de inventario.</p>{{ template "admin_demo_tools" . }}<a class="btn-light" href="{{ .baseUrl }}/admin/inventario">Ir a inventario</a></section>{{ end }}
+</main></div></div></body></html>
+{{ end }}

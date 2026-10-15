@@ -47,7 +47,8 @@ def healthz():
 def readyz():
     with pool.connection() as conn:
         conn.execute('SELECT id FROM boutique.products LIMIT 1')
-        conn.execute('SELECT id FROM boutique.orders LIMIT 1')
+        conn.execute('SELECT id,demo,shipment_version FROM boutique.orders LIMIT 1')
+        conn.execute('SELECT id FROM boutique.shipment_events LIMIT 1')
     return {'status': 'ready'}
 
 
@@ -75,6 +76,8 @@ def auth_logout():
 from catalog import register_catalog
 from orders import register_orders
 from reports import register_reports
+from demo import register_demo
 register_catalog(app)
 register_orders(app)
 register_reports(app)
+register_demo(app)

@@ -97,6 +97,7 @@ postgresIntegration:
   enabled: false
   secretName: boutique-integration
   cookieSecure: true
+  demoDataEnabled: false
   databaseCIDR: ""
   database:
     create: false

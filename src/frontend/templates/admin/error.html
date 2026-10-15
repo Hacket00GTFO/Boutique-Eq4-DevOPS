@@ -1,0 +1,6 @@
+{{ define "admin_error" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}<main class="admin-content">
+<section class="card admin-edit-form"><h1>No se pudo completar la operación</h1><p role="alert">{{ .error_message }}</p><p>Revisa los datos o vuelve a cargar el registro para obtener su versión actual.</p><div class="page-actions"><a class="btn-dark" href="{{ .back_url }}">Volver</a><a class="btn-light" href="{{ .baseUrl }}/admin">Ir al panel</a></div></section>
+</main></div></div></body></html>
+{{ end }}

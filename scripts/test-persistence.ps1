@@ -4,11 +4,11 @@ $taskValues = @{}
 foreach ($taskLine in Get-Content -LiteralPath (Join-Path $taskRoot '.env')) {
     if ($taskLine -match '^([A-Z_]+)=(.*)$') { $taskValues[$Matches[1]] = $Matches[2] }
 }
-$taskJob = Start-Job -ArgumentList $taskRoot,$taskValues['ADMIN_EMAIL'],$taskValues['ADMIN_PASSWORD'] -ScriptBlock {
-    param($taskDirectory,$taskEmail,$taskPassword)
+$taskJob = Start-Job -ArgumentList $taskRoot,$taskValues['ADMIN_EMAIL'],$taskValues['ADMIN_PASSWORD'],$taskValues['ADMIN_API_TOKEN'] -ScriptBlock {
+    param($taskDirectory,$taskEmail,$taskPassword,$taskApiToken)
     Set-Location -LiteralPath $taskDirectory
     Get-Content scripts/test-persistence.py -Raw | docker compose -f docker-compose.yml -f docker-compose.admin.yml exec -T `
-        -e "ADMIN_EMAIL=$taskEmail" -e "ADMIN_PASSWORD=$taskPassword" recommendationservice python -
+        -e "ADMIN_EMAIL=$taskEmail" -e "ADMIN_PASSWORD=$taskPassword" -e "ADMIN_API_TOKEN=$taskApiToken" recommendationservice python -
     if ($LASTEXITCODE -ne 0) { throw 'Persistence probe failed' }
 }
 Push-Location $taskRoot

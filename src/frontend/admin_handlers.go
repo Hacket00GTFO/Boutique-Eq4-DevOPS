@@ -20,6 +20,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -29,9 +30,8 @@ import (
 // ---------------------------------------------------------------------------
 // Admin panel — HTTP handlers
 //
-// Data comes from `adminData` (AdminDataProvider). Today it is mockAdminData;
-// swap it for a gRPC/REST-backed implementation when the backend lands.
-// See docs/admin-panel.md.
+// Backend mode reads and mutates persistent data through the private API.
+// AdminDataProvider remains available for the original standalone mock demo.
 // ---------------------------------------------------------------------------
 
 var (
@@ -196,7 +196,7 @@ func (fe *frontendServer) adminCatalogHandler(w http.ResponseWriter, r *http.Req
 	if err := adminTemplates.ExecuteTemplate(w, "admin_catalog", injectAdminData(r, map[string]interface{}{
 		"active":             "catalogo",
 		"title":              "Gestión de Catálogo",
-		"subtitle":           "Manage product listings, pricing, and availability.",
+		"subtitle":           "Administra productos, precios y disponibilidad.",
 		"search_placeholder": "Search catalog...",
 		"page":               products,
 	})); err != nil {
@@ -215,7 +215,7 @@ func (fe *frontendServer) adminInventoryHandler(w http.ResponseWriter, r *http.R
 	if err := adminTemplates.ExecuteTemplate(w, "admin_inventory", injectAdminData(r, map[string]interface{}{
 		"active":             "inventario",
 		"title":              "Control de Inventario",
-		"subtitle":           "Manage stock levels across all warehouses.",
+		"subtitle":           "Administra existencias, recepciones y movimientos por almacén.",
 		"search_placeholder": "Search inventory...",
 		"page":               inventory,
 	})); err != nil {
@@ -227,11 +227,14 @@ func injectAdminData(r *http.Request, payload map[string]interface{}) map[string
 	data := map[string]interface{}{
 		"path":            r.URL.Path,
 		"backend_enabled": adminBackendEnabled(),
+		"demo_enabled":    adminBackendEnabled() && os.Getenv("DEMO_DATA_ENABLED") == "true",
 		"csrf_token":      csrfForSession(adminSession(r)),
 		"query":           r.URL.Query(),
 		"baseUrl":         baseUrl,
 		"request_id":      r.Context().Value(ctxKeyRequestID{}),
 	}
+	notices := map[string]string{"demo-loaded": "Datos demo cargados. Los registros existentes se conservaron.", "saved": "Cambios guardados en PostgreSQL.", "cancelled": "Pedido demo cancelado y existencias devueltas al inventario."}
+	data["notice"] = notices[r.URL.Query().Get("notice")]
 	for k, v := range payload {
 		data[k] = v
 	}
@@ -245,7 +248,7 @@ func adminStatusClass(status string) string {
 		return "st-ok"
 	case "enviado", "shipped":
 		return "st-info"
-	case "pendiente", "pending", "low stock":
+	case "pendiente", "pending", "low stock", "incidencia":
 		return "st-warn"
 	case "cancelado", "inactive", "out of stock":
 		return "st-bad"

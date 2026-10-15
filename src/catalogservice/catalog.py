@@ -53,6 +53,10 @@ def filtered_products(inventory=False, all_rows=False):
     if q:
         clauses.append('(name ILIKE %s OR sku ILIKE %s)')
         params.extend(['%' + q + '%'] * 2)
+    active = request.args.get('active', '')
+    if active in ('true', 'false'):
+        clauses.append('active=%s')
+        params.append(active == 'true')
     warehouse = request.args.get('warehouse', '')
     if warehouse:
         clauses.append('warehouse=%s')
@@ -69,8 +73,9 @@ def filtered_products(inventory=False, all_rows=False):
                             (' LIMIT 10001' if all_rows else ' LIMIT %s OFFSET %s'), params + ([] if all_rows else [size, (page - 1) * size])).fetchall()
         stats = conn.execute('SELECT count(*) AS total,count(*) FILTER(WHERE stock-reserved<=5) AS low FROM boutique.products').fetchone()
         locations = [r['warehouse'] for r in conn.execute('SELECT DISTINCT warehouse FROM boutique.products ORDER BY warehouse')]
+        categories = [r['category'] for r in conn.execute('SELECT DISTINCT unnest(categories) AS category FROM boutique.products ORDER BY category')]
     result = page_info(total, page, size)
-    result.update(ActiveCategory=category, ActiveFilter=stock, Warehouses=locations)
+    result.update(ActiveCategory=category, ActiveFilter=stock, Warehouses=locations, CategoryOptions=categories)
     result['Items' if inventory else 'Products'] = [(inventory_view if inventory else product_view)(r) for r in rows]
     if inventory:
         result['Stats'] = [{'Label': 'TOTAL SKUS', 'Value': str(stats['total']), 'Icon': 'inventory_2'},
@@ -136,6 +141,21 @@ def register_catalog(app):
             audit(conn, g.admin['email'], 'product.create', id, g.request_id)
         return product_view(row), 201
 
+    @app.patch('/api/v1/products/<id>/activation')
+    @admin(write=True)
+    def activation(id):
+        data = request.get_json()
+        if not isinstance(data.get('active'), bool):
+            raise ValueError('Estado de producto inválido')
+        with pool.connection() as conn:
+            row = conn.execute('''UPDATE boutique.products SET active=%s,version=version+1,updated_at=now()
+                                WHERE id=%s AND version=%s RETURNING *''',
+                                (data['active'], id, int(data.get('version', 0)))).fetchone()
+            if not row:
+                abort(409, 'Producto cambiado; vuelve a cargarlo')
+            audit(conn, g.admin['email'], 'product.activate' if data['active'] else 'product.archive', id, g.request_id)
+        return product_view(row)
+
     @app.patch('/api/v1/products/<id>')
     @admin(write=True)
     def update_product(id):
@@ -181,3 +201,14 @@ def register_catalog(app):
             conn.execute('INSERT INTO boutique.stock_movements(product_id,delta,reason,actor) VALUES (%s,%s,%s,%s)', (row['id'], delta, reason, g.admin['email']))
             audit(conn, g.admin['email'], 'inventory.adjust', row['id'], g.request_id)
         return inventory_view(row)
+
+    @app.get('/api/v1/inventory/<id>')
+    @admin()
+    def inventory_detail(id):
+        with pool.connection() as conn:
+            row = conn.execute('SELECT * FROM boutique.products WHERE id=%s', (id,)).fetchone()
+            if not row:
+                abort(404)
+            movements = conn.execute('SELECT * FROM boutique.stock_movements WHERE product_id=%s ORDER BY id DESC LIMIT 100', (id,)).fetchall()
+        return {'Item': inventory_view(row), 'Movements': [{'Delta': m['delta'], 'Reason': m['reason'],
+                 'Actor': m['actor'], 'Date': m['created_at'].isoformat()} for m in movements]}

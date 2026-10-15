@@ -20,6 +20,11 @@ Back-office para la tienda, diseñado primero en Figma (especificación visual c
 
 Estado actual: las cuatro secciones están conectadas a un backend PostgreSQL en el modo de integración. Catálogo, inventario, pedidos, dashboard y sesiones usan datos persistentes. Pago, envío y correo mantienen los simuladores del demo. Ver [arranque, pruebas y alcance](docs/postgres-integration.md).
 
+El panel incluye **Cargar datos demo** y **Crear pedido demo**. Permite editar,
+archivar y reactivar productos, registrar entradas/salidas y consultar movimientos.
+En **Pedidos → Detalles y envío** se gestionan paquetería, guía, fecha estimada,
+incidencias y entrega, con historial persistente. [Guía de uso del demo](docs/demo-management.md).
+
 ### Arquitectura de despliegue
 
 La integración nueva usa **Docker Compose local y EKS/Helm** con PostgreSQL privado. Activación en PowerShell: `./scripts/start-integration.ps1`; genera las credenciales locales si faltan, inicia ambos archivos de Compose y verifica la disponibilidad del frontend. `docker compose up` por sí solo inicia el demo sin PostgreSQL. En EKS se usa `helm-chart/values-postgres.yaml` y un Secret de entorno. La arquitectura ECS descrita a continuación es histórica y requiere las correcciones de red/roles documentadas en la auditoría; no activa PostgreSQL automáticamente.

@@ -185,6 +185,13 @@ func main() {
 	adm.HandleFunc("/pedidos/detail", svc.adminOrderDetail).Methods(http.MethodGet)
 	adm.HandleFunc("/pedidos/status", svc.adminOrderStatus).Methods(http.MethodPost)
 	adm.HandleFunc("/pedidos/reconcile", svc.adminReconcileOrder).Methods(http.MethodPost)
+	adm.HandleFunc("/demo/seed", svc.adminDemoSeed).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/form", svc.adminDemoOrderForm).Methods(http.MethodGet)
+	adm.HandleFunc("/pedidos/create-demo", svc.adminDemoOrderCreate).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/shipment", svc.adminShipmentSave).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/cancel-demo", svc.adminDemoOrderCancel).Methods(http.MethodPost)
+	adm.HandleFunc("/catalogo/activate", svc.adminActivateProduct).Methods(http.MethodPost)
+	adm.HandleFunc("/inventario/detail", svc.adminInventoryDetail).Methods(http.MethodGet)
 	adm.HandleFunc("/export", svc.adminExport).Methods(http.MethodGet)
 
 	var handler http.Handler = r

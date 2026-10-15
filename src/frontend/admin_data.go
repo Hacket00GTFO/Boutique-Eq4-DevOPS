@@ -42,6 +42,10 @@ type AdminTopProduct struct {
 }
 
 type AdminOrder struct {
+	Demo          bool
+	CustomerName  string
+	ShippingCost  string
+	Shipment      AdminShipment
 	Result        map[string]interface{}
 	State         string
 	TransactionID string
@@ -53,6 +57,11 @@ type AdminOrder struct {
 	PaymentMethod string
 	PaymentIcon   string // material symbol name, e.g. "credit_card"
 	Status        string // ENTREGADO | ENVIADO | PENDIENTE | CANCELADO | Active | Shipped | Pending
+}
+
+type AdminShipment struct {
+	Version                                       int
+	Carrier, TrackingID, Notes, EstimatedDelivery string
 }
 
 type AdminProduct struct {
@@ -100,13 +109,14 @@ type AdminOrdersPage struct {
 }
 
 type AdminCatalogPage struct {
-	Products       []AdminProduct
-	ActiveCategory string
-	ShowingFrom    int
-	ShowingTo      int
-	Total          int
-	CurrentPage    int
-	TotalPages     int
+	CategoryOptions []string
+	Products        []AdminProduct
+	ActiveCategory  string
+	ShowingFrom     int
+	ShowingTo       int
+	Total           int
+	CurrentPage     int
+	TotalPages      int
 }
 
 type AdminInventoryPage struct {

@@ -3,6 +3,7 @@ import concurrent.futures
 import os
 import unittest
 import uuid
+from unittest.mock import patch
 from werkzeug.security import generate_password_hash
 from main import app
 from db import pool
@@ -53,6 +54,7 @@ class IntegrationTests(unittest.TestCase):
         headers = dict(self.admin_headers, **{'X-Admin-Session': response.json['token']})
         self.assertEqual(self.client.get('/api/v1/products', headers=headers).status_code, 200)
         self.assertEqual(self.client.post('/api/v1/products', headers=headers, json={}).status_code, 403)
+        self.assertEqual(self.client.post('/api/v1/demo/seed', headers=headers, json={}).status_code, 403)
         self.assertEqual(self.client.post('/api/v1/auth/logout', headers=headers).status_code, 200)
         self.assertEqual(self.client.get('/api/v1/auth/me', headers=headers).status_code, 401)
 
@@ -144,6 +146,88 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.json)
         self.assertEqual(response.json['Categories'],['clothing','tops'])
 
+
+    def demo_order(self, key=None, quantity=1):
+        return {'key': key or uuid.uuid4().hex, 'customer_name': 'Cliente Demo', 'email': 'demo@example.invalid',
+                'shipping_fee': '5.00', 'address': {'streetAddress': 'Demo 123', 'city': 'Demo',
+                'state': 'Demo', 'country': 'México', 'zipCode': '64000'},
+                'items': [{'product_id': self.product['ID'], 'quantity': quantity}]}
+
+    def test_demo_seed_is_idempotent_and_disabled_by_default(self):
+        with patch.dict(os.environ, {'DEMO_DATA_ENABLED': 'false'}):
+            self.assertEqual(self.client.post('/api/v1/demo/seed', headers=self.admin_headers, json={}).status_code, 403)
+        first = self.client.post('/api/v1/demo/seed', headers=self.admin_headers, json={})
+        self.assertEqual(first.status_code, 200, first.json)
+        before = self.client.get('/api/v1/inventory?warehouse=Demo%20Central', headers=self.admin_headers).json
+        second = self.client.post('/api/v1/demo/seed', headers=self.admin_headers, json={})
+        self.assertEqual(second.json, {'ProductsCreated': 0, 'OrdersCreated': 0})
+        after = self.client.get('/api/v1/inventory?warehouse=Demo%20Central', headers=self.admin_headers).json
+        self.assertEqual(before['Items'], after['Items'])
+
+    def test_demo_creation_cancellation_and_movements(self):
+        self.stock(4)
+        data = self.demo_order(quantity=2)
+        first = self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=data)
+        self.assertEqual(first.status_code, 201, first.json)
+        path = '/api/v1/orders/' + first.json['ID']
+        second = self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=data)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json['ID'], second.json['ID'])
+        self.assertEqual(first.json['Total'], 'USD 25.50')
+        self.assertEqual(first.json['Status'], 'PENDIENTE')
+        self.assertEqual(self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=dict(data, email='other@example.invalid')).status_code, 409)
+        self.assertEqual(self.client.get('/api/v1/inventory/' + self.product['ID'], headers=self.admin_headers).json['Item']['Stock'], 2)
+        self.assertEqual(self.client.post(path + '/cancel-demo', headers=self.admin_headers, json={'reason': 'Cancelación de prueba'}).status_code, 200)
+        self.assertEqual(self.client.post(path + '/cancel-demo', headers=self.admin_headers, json={'reason': 'Reintento'}).status_code, 409)
+        detail = self.client.get('/api/v1/inventory/' + self.product['ID'], headers=self.admin_headers).json
+        self.assertEqual(detail['Item']['Stock'], 4)
+        self.assertEqual([m['Delta'] for m in detail['Movements']], [2, -2, 4])
+        self.assertEqual(self.client.get(path, headers=self.admin_headers).json['Status'], 'CANCELADO')
+        self.assertEqual(self.client.get('/api/v1/orders?status=CANCELADO&q=' + first.json['ID'], headers=self.admin_headers).json['Total'], 1)
+
+    def test_demo_order_rejects_invalid_quantities_and_partial_stock_changes(self):
+        self.stock(4)
+        data = self.demo_order()
+        for quantity in (0, -1, 1.5, 101, None, True):
+            data['items'][0]['quantity'] = quantity
+            response = self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=data)
+            self.assertEqual(response.status_code, 422, response.json)
+        data = self.demo_order()
+        data['items'].append({'product_id': 'zz-missing-product', 'quantity': 1})
+        self.assertEqual(self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=data).status_code, 409)
+        self.assertEqual(self.client.get('/api/v1/inventory/' + self.product['ID'], headers=self.admin_headers).json['Item']['Stock'], 4)
+
+    def test_shipment_transitions_versions_and_history(self):
+        self.stock(2)
+        order = self.client.post('/api/v1/demo/orders', headers=self.admin_headers, json=self.demo_order()).json
+        path = '/api/v1/orders/' + order['ID']
+        data = {'version': order['Shipment']['Version'], 'status': 'ENVIADO', 'carrier': 'Demo Parcel',
+                'tracking_id': 'DEMO-TEST', 'estimated_delivery': '2026-12-10', 'notes': 'Salida de almacén'}
+        self.assertEqual(self.client.patch(path + '/shipment', headers=self.admin_headers, json=dict(data, carrier='')).status_code, 422)
+        self.assertEqual(self.client.patch(path + '/shipment', headers=self.admin_headers, json=dict(data, status='ENTREGADO')).status_code, 409)
+        shipped = self.client.patch(path + '/shipment', headers=self.admin_headers, json=data)
+        self.assertEqual(shipped.status_code, 200, shipped.json)
+        self.assertEqual(self.client.patch(path + '/shipment', headers=self.admin_headers, json=data).status_code, 409)
+        self.assertEqual(self.client.post(path + '/cancel-demo', headers=self.admin_headers, json={'reason': 'Ya enviado'}).status_code, 409)
+        data.update(version=shipped.json['Shipment']['Version'], status='INCIDENCIA', notes='Cliente ausente')
+        incident = self.client.patch(path + '/shipment', headers=self.admin_headers, json=data)
+        self.assertEqual(incident.status_code, 200, incident.json)
+        data.update(version=incident.json['Shipment']['Version'], status='ENTREGADO', notes='Recibido por cliente')
+        delivered = self.client.patch(path + '/shipment', headers=self.admin_headers, json=data)
+        self.assertEqual(delivered.status_code, 200, delivered.json)
+        detail = self.client.get(path, headers=self.admin_headers).json
+        self.assertEqual([e['Status'] for e in detail['ShipmentEvents']], ['ENTREGADO', 'INCIDENCIA', 'ENVIADO', 'PENDIENTE'])
+        self.assertEqual(detail['Shipment']['TrackingID'], 'DEMO-TEST')
+        self.assertEqual(detail['Items'][0]['Subtotal'], 'USD 10.25')
+        self.assertEqual(self.client.patch(path + '/shipment', headers=self.admin_headers, json=dict(data, version=delivered.json['Shipment']['Version'], status='ENVIADO')).status_code, 409)
+
+    def test_manual_demo_orders_compete_for_last_unit(self):
+        self.stock(1)
+        def create(_):
+            with app.test_client() as client:
+                return client.post('/api/v1/demo/orders', headers=self.admin_headers, json=self.demo_order()).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            self.assertEqual(sorted(executor.map(create, range(2))), [201, 409])
 
 if __name__ == '__main__':
     unittest.main()

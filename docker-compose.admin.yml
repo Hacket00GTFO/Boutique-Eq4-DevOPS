@@ -40,6 +40,7 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?Required}
       CATALOG_READ_TOKEN: ${CATALOG_READ_TOKEN:?Required}
       CHECKOUT_API_TOKEN: ${CHECKOUT_API_TOKEN:?Required}
+      DEMO_DATA_ENABLED: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -69,6 +70,7 @@ services:
       ADMIN_API_BASE_URL: http://catalogservice:8080
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       ADMIN_COOKIE_SECURE: "false"
+      DEMO_DATA_ENABLED: "true"
     depends_on:
       catalogservice:
         condition: service_healthy

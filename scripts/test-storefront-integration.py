@@ -28,7 +28,7 @@ def request(path, data=None, backend=False, method=None, expected=200):
         headers['Content-Type'] = 'application/json'
         raw = json.dumps(data).encode() if data is not None else None
     else:
-        raw = urllib.parse.urlencode(data).encode() if data is not None else None
+        raw = urllib.parse.urlencode(data, doseq=True).encode() if data is not None else None
     req = urllib.request.Request(base + path, data=raw, headers=headers, method=method)
     try:
         res = client.open(req, timeout=25)
@@ -38,7 +38,7 @@ def request(path, data=None, backend=False, method=None, expected=200):
         body = res.read().decode()
         status, final_path = res.code, urllib.parse.urlparse(res.url).path
     assert status == expected, f'{path}: HTTP {status}, expected {expected}'
-    return json.loads(body) if backend and status == 200 else (body, final_path)
+    return json.loads(body) if backend and status in (200, 201) else (body, final_path)
 
 
 def token(body, name='csrf_token'):
@@ -136,6 +136,86 @@ finally:
     current = request('/api/v1/products/' + product_id, backend=True)
     request('/admin/catalogo/archive', {'csrf_token': csrf, 'id': product_id, 'version': str(current['Version'])})
     request('/cart/empty', {})
+# Persistent demo management through the same forms the user operates.
+for page in ['/admin', '/admin/catalogo', '/admin/inventario', '/admin/pedidos']:
+    assert 'Cargar datos demo' in request(page)[0]
+passed('persistent demo controls are available throughout the panel')
+request('/admin/demo/seed', {'csrf_token': csrf})
+seeded_before = request('/api/v1/inventory?warehouse=Demo%20Central', backend=True)
+request('/admin/demo/seed', {'csrf_token': csrf})
+assert request('/api/v1/inventory?warehouse=Demo%20Central', backend=True)['Items'] == seeded_before['Items']
+assert request('/api/v1/orders?q=ana@example.invalid', backend=True)['Total'] == 1
+passed('demo data loads without duplicate orders or resetting stock')
+
+current = request('/api/v1/products/' + product_id, backend=True)
+request('/admin/catalogo/activate', {'csrf_token': csrf, 'id': product_id, 'version': current['Version']})
+assert request('/api/v1/products/' + product_id, backend=True)['Status'] == 'Active'
+passed('archived catalog products can be reactivated')
+try:
+    request('/admin/inventario/adjust', {'csrf_token': csrf, 'product_id': product_id, 'movement': 'entry', 'delta': '3', 'reason': 'Recepción demo E2E'})
+    request('/admin/inventario/adjust', {'csrf_token': csrf, 'product_id': product_id, 'movement': 'exit', 'delta': '1', 'reason': 'Ajuste demo E2E'})
+    stock_before = request('/api/v1/inventory/' + product_id, backend=True)['Item']['Stock']
+    body, _ = request('/admin/inventario/detail?id=' + product_id)
+    assert 'Recepción demo E2E' in body and 'Ajuste demo E2E' in body
+    passed('inventory entry, exit and movement history persist')
+    request('/admin/inventario/adjust', {'csrf_token': csrf, 'product_id': product_id, 'movement': 'exit', 'delta': '100000', 'reason': 'Invalid stock test'}, expected=409)
+    passed('inventory rejects exits beyond available stock')
+    body, _ = request('/admin/pedidos/form')
+    demo_data = {'csrf_token': csrf, 'order_key': token(body, 'order_key'), 'customer_name': 'Cliente Demo E2E',
+                 'email': 'demo-e2e@example.invalid', 'street_address': 'Demo 456', 'city': 'Monterrey',
+                 'state': 'Nuevo León', 'country': 'México', 'zip_code': '64000', 'shipping_fee': '5.00',
+                 'product_id': [product_id, 'demo-camiseta'], 'quantity': ['2', '1']}
+    body, path = request('/admin/pedidos/create-demo', demo_data)
+    demo_id = re.search(r'<input type="hidden" name="id" value="([^"]+)"', body).group(1)
+    demo_order = request('/api/v1/orders/' + demo_id, backend=True)
+    assert demo_order['Demo'] and demo_order['Status'] == 'PENDIENTE' and len(demo_order['Items']) == 2
+    assert request('/api/v1/orders?q=Cliente%20Demo%20E2E', backend=True)['Total'] >= 1
+    assert demo_order['Total'] == 'USD 55.00'
+    assert request('/api/v1/inventory/' + product_id, backend=True)['Item']['Stock'] == stock_before - 2
+    passed('multi-product demo order is created from the frontend with exact totals and stock consumption')
+    body, _ = request('/admin/pedidos/create-demo', demo_data)
+    assert demo_id in body
+    assert request('/api/v1/orders?q=' + demo_id, backend=True)['Total'] == 1
+    passed('repeating a demo order form does not duplicate the order')
+    shipment = {'csrf_token': csrf, 'id': demo_id, 'version': str(demo_order['Shipment']['Version']),
+                'status': 'ENVIADO', 'carrier': 'Paquetería demo E2E', 'tracking_id': 'DEMO-E2E-' + uuid.uuid4().hex[:8],
+                'estimated_delivery': '2026-12-10', 'notes': 'Salida de almacén demo'}
+    request('/admin/pedidos/shipment', dict(shipment, csrf_token=''), expected=403)
+    request('/admin/pedidos/shipment', dict(shipment, carrier=''), expected=422)
+    passed('shipping forms require CSRF, carrier and tracking details')
+    body, path = request('/admin/pedidos/shipment', shipment)
+    assert path == '/admin/pedidos/detail' and shipment['tracking_id'] in body
+    shipped = request('/api/v1/orders/' + demo_id, backend=True)
+    assert shipped['Status'] == 'ENVIADO' and shipped['Shipment']['EstimatedDelivery'] == '2026-12-10'
+    passed('shipment carrier, tracking and estimated delivery persist within the order detail')
+    request('/admin/pedidos/shipment', shipment, expected=409)
+    request('/admin/pedidos/cancel-demo', {'csrf_token': csrf, 'id': demo_id, 'reason': 'Already shipped'}, expected=409)
+    passed('stale shipment edits and cancellation after shipping are rejected')
+    shipment.update(version=str(shipped['Shipment']['Version']), status='INCIDENCIA', notes='Cliente ausente demo')
+    request('/admin/pedidos/shipment', shipment)
+    incident = request('/api/v1/orders/' + demo_id, backend=True)
+    assert incident['Status'] == 'INCIDENCIA'
+    assert request('/api/v1/orders?status=INCIDENCIA&q=' + demo_id, backend=True)['Total'] == 1
+    passed('shipping incidents are recorded and searchable')
+    shipment.update(version=str(incident['Shipment']['Version']), status='ENTREGADO', notes='Recibido por cliente demo')
+    body, _ = request('/admin/pedidos/shipment', shipment)
+    delivered = request('/api/v1/orders/' + demo_id, backend=True)
+    assert delivered['Status'] == 'ENTREGADO' and len(delivered['ShipmentEvents']) == 4
+    assert 'Cliente ausente demo' in body and 'Entrega finalizada' in body
+    passed('delivery finalizes the shipment with a persistent event history')
+    body, _ = request('/admin/pedidos/form')
+    cancel_data = dict(demo_data, order_key=token(body, 'order_key'), product_id=[product_id], quantity=['1'])
+    body, _ = request('/admin/pedidos/create-demo', cancel_data)
+    cancel_id = re.search(r'<input type="hidden" name="id" value="([^"]+)"', body).group(1)
+    request('/admin/pedidos/cancel-demo', {'csrf_token': csrf, 'id': cancel_id, 'reason': 'Cancelación demo E2E'})
+    request('/admin/pedidos/cancel-demo', {'csrf_token': csrf, 'id': cancel_id, 'reason': 'Repetir cancelación'}, expected=409)
+    assert request('/api/v1/orders/' + cancel_id, backend=True)['Status'] == 'CANCELADO'
+    assert request('/api/v1/inventory/' + product_id, backend=True)['Item']['Stock'] == stock_before - 2
+    passed('pending demo cancellation restores stock exactly once')
+finally:
+    current = request('/api/v1/products/' + product_id, backend=True)
+    request('/admin/catalogo/archive', {'csrf_token': csrf, 'id': product_id, 'version': str(current['Version'])})
+
 request('/admin/logout', {'csrf_token': csrf})
 assert request('/admin')[1] == '/admin/login'
 passed('logout invalidates the shared session')

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,7 +86,15 @@ func adminFailure(w http.ResponseWriter, r *http.Request, err error) {
 		http.Redirect(w, r, baseUrl+"/admin/login", http.StatusSeeOther)
 		return
 	}
-	http.Error(w, err.Error(), code)
+	back := baseUrl + "/admin"
+	if referer, parseErr := url.Parse(r.Referer()); parseErr == nil && referer.Host == r.Host && strings.HasPrefix(referer.Path, baseUrl+"/admin") {
+		back = referer.RequestURI()
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	_ = adminTemplates.ExecuteTemplate(w, "admin_error", injectAdminData(r, map[string]interface{}{
+		"title": "No se pudo completar la operación", "active": "", "error_message": err.Error(), "back_url": back,
+	}))
 }
 
 func csrfForSession(token string) string {
@@ -165,7 +174,7 @@ func (fe *frontendServer) adminSaveProduct(w http.ResponseWriter, r *http.Reques
 		adminFailure(w, r, err)
 		return
 	}
-	http.Redirect(w, r, baseUrl+"/admin/catalogo", http.StatusSeeOther)
+	http.Redirect(w, r, baseUrl+"/admin/catalogo?notice=saved", http.StatusSeeOther)
 }
 
 func (fe *frontendServer) adminArchiveProduct(w http.ResponseWriter, r *http.Request) {
@@ -173,25 +182,37 @@ func (fe *frontendServer) adminArchiveProduct(w http.ResponseWriter, r *http.Req
 		adminFailure(w, r, err)
 		return
 	}
-	http.Redirect(w, r, baseUrl+"/admin/catalogo", http.StatusSeeOther)
+	http.Redirect(w, r, baseUrl+"/admin/catalogo?notice=saved", http.StatusSeeOther)
 }
 
 func (fe *frontendServer) adminAdjustStock(w http.ResponseWriter, r *http.Request) {
 	data := map[string]string{"product_id": r.FormValue("product_id"), "delta": r.FormValue("delta"), "reason": r.FormValue("reason")}
+	if movement := r.FormValue("movement"); movement != "" {
+		quantity, err := strconv.Atoi(data["delta"])
+		if err != nil || quantity <= 0 || (movement != "entry" && movement != "exit") {
+			adminFailure(w, r, &adminAPIError{422, "Indica una cantidad positiva y una entrada o salida"})
+			return
+		}
+		if movement == "exit" {
+			quantity = -quantity
+		}
+		data["delta"] = strconv.Itoa(quantity)
+	}
 	if err := adminAPI(r.Context(), "POST", "/api/v1/inventory/adjustments", adminSession(r), data, nil); err != nil {
 		adminFailure(w, r, err)
 		return
 	}
-	http.Redirect(w, r, baseUrl+"/admin/inventario", http.StatusSeeOther)
+	http.Redirect(w, r, baseUrl+"/admin/inventario/detail?id="+url.QueryEscape(r.FormValue("product_id"))+"&notice=saved", http.StatusSeeOther)
 }
 
 func (fe *frontendServer) adminOrderDetail(w http.ResponseWriter, r *http.Request) {
 	var detail struct {
 		AdminOrder
 		Items []struct {
-			Name, SKU, Price string
-			Quantity         int
+			Name, SKU, Price, Subtotal string
+			Quantity                   int
 		}
+		ShipmentEvents []struct{ Date, Status, Carrier, TrackingID, Notes, Actor string }
 	}
 	if err := adminAPI(r.Context(), "GET", "/api/v1/orders/"+url.PathEscape(r.URL.Query().Get("id")), adminSession(r), nil, &detail); err != nil {
 		adminFailure(w, r, err)
@@ -207,7 +228,7 @@ func (fe *frontendServer) adminOrderStatus(w http.ResponseWriter, r *http.Reques
 		adminFailure(w, r, err)
 		return
 	}
-	http.Redirect(w, r, baseUrl+"/admin/pedidos", http.StatusSeeOther)
+	http.Redirect(w, r, baseUrl+"/admin/pedidos/detail?id="+url.QueryEscape(r.FormValue("id"))+"&notice=saved", http.StatusSeeOther)
 }
 
 func (fe *frontendServer) adminReconcileOrder(w http.ResponseWriter, r *http.Request) {

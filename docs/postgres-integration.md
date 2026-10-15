@@ -100,16 +100,21 @@ Los demás contenedores continúan usando sus direcciones gRPC de Compose/Helm.
 
 ## Funciones del panel
 
+El demo administrativo incluye carga de ejemplos persistentes, creación de
+pedidos y gestión de envíos desde su detalle. Ver la [guía de botones y operaciones](demo-management.md).
+
 - Catálogo: búsqueda, categoría, paginación, alta, edición con versión
-  optimista y archivo lógico. Cada producto es un SKU comprable, con etiqueta
+  optimista, archivo lógico y reactivación. Cada producto es un SKU comprable, con etiqueta
   de variante y una ubicación de almacén. Precio USD con precisión exacta.
   El formulario admite categorías separadas por coma y conserva las múltiples
   categorías del catálogo original.
 - Inventario: filtros de stock/almacén, búsqueda, ajuste positivo o negativo
-  con motivo, stock disponible y reservado. No permite consumir unidades
+  con motivo, entradas/salidas e historial de movimientos, stock disponible y reservado. No permite consumir unidades
   reservadas ni dejar existencias negativas.
 - Pedidos: compras persistentes, snapshots de nombre/SKU/precio, detalle,
-  filtros por fecha/estado, paginación y transición ENVIADO → ENTREGADO.
+  filtros por cliente/fecha/estado y paginación. El detalle gestiona paquetería,
+  guía, fecha estimada, notas, incidencias y entrega con historial y versión.
+  Los pedidos demo pendientes pueden cancelarse devolviendo stock una sola vez.
   La cancelación de un pedido pagado requiere un proceso de reembolso y no
   se ofrece como borrado administrativo.
 - Dashboard: ventas confirmadas en USD, cantidad de pedidos confirmados,
@@ -175,10 +180,15 @@ servicio. Los endpoints internos usan sus tokens separados de lectura/checkout.
 | /api/v1/auth/login, /logout, /me | POST / POST / GET bajo /auth |
 | /api/v1/products | GET paginado, POST |
 | /api/v1/products/{id} | GET, PATCH con version, DELETE lógico con version |
+| /api/v1/products/{id}/activation | PATCH con active y version |
 | /api/v1/inventory | GET con stock, warehouse, q, page, page_size |
+| /api/v1/inventory/{id} | GET: existencias e historial de movimientos |
 | /api/v1/inventory/adjustments | POST: product_id, delta, reason |
 | /api/v1/orders | GET con from, to, status, q y paginación |
 | /api/v1/orders/{id}, /status, /reconcile | GET / PATCH / POST |
+| /api/v1/orders/{id}/shipment | PATCH con version, status, carrier, tracking_id, estimated_delivery, notes |
+| /api/v1/orders/{id}/cancel-demo | POST con reason; solo demo pendiente |
+| /api/v1/demo/seed, /orders, /products | POST / POST / GET; requiere DEMO_DATA_ENABLED=true |
 | /api/v1/dashboard | GET |
 | /api/v1/exports/{products,inventory,orders} | GET |
 | /internal/products | GET, token de catálogo |
@@ -207,6 +217,8 @@ Verifica transacciones PostgreSQL, roles/sesiones, precio, edición concurrente,
 última unidad, idempotencia, liberación de reservas, conciliación, reportes y
 CSV. La segunda crea un SKU propio mediante el frontend, realiza una compra
 simulada con EUR y verifica pedido/stock/exportación; archiva ese SKU al terminar.
+También verifica carga idempotente de ejemplos, pedidos demo con varios SKU,
+entradas/salidas, historial, cancelaciones y el ciclo completo de envío.
 El pedido sintético queda en el histórico local como evidencia de integración.
 La tercera prueba reinicia PostgreSQL, backend y frontend mientras mantiene una
 sesión en el cliente; comprueba que sesión y pedido siguen disponibles.

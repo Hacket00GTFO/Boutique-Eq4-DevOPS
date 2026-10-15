@@ -5,6 +5,7 @@ from psycopg.types.json import Jsonb
 from auth import admin, require_service
 from catalog import money, page_info, pagination
 from db import audit, pool
+from shipments import shipment_event, update_shipment
 
 
 def nanos(value):
@@ -24,7 +25,13 @@ def order_view(row):
             'Customer': row['email'], 'Total': money(row['total_nanos'], row['currency']),
             'Status': 'CANCELADO' if row['state'] in ('cancelled', 'failed') else row['fulfillment'],
             'State': row['state'], 'PaymentMethod': row['payment_method'], 'PaymentIcon': 'credit_card',
-            'Result': row['payload'], 'TransactionID': row['transaction_id']}
+            'Result': row['payload'], 'TransactionID': row['transaction_id'],
+            'Demo': row['demo'], 'CustomerName': row['customer_name'],
+            'ShippingCost': money(nanos(row['payload'].get('shippingCost', {})), row['currency']),
+            'Shipment': {'Version': row['shipment_version'], 'Carrier': row['shipping_carrier'],
+                         'TrackingID': row['payload'].get('shippingTrackingId', ''),
+                         'Notes': row['shipping_notes'],
+                         'EstimatedDelivery': row['estimated_delivery'].isoformat() if row['estimated_delivery'] else ''}}
 
 
 def orders_page(all_rows=False):
@@ -42,11 +49,11 @@ def orders_page(all_rows=False):
             params.append(bound)
     q = request.args.get('q', '')[:128]
     if q:
-        clauses.append('(email ILIKE %s OR id::text ILIKE %s)')
-        params.extend(['%' + q + '%'] * 2)
+        clauses.append('(email ILIKE %s OR customer_name ILIKE %s OR id::text ILIKE %s)')
+        params.extend(['%' + q + '%'] * 3)
     state = request.args.get('status', '')
     if state:
-        clauses.append('fulfillment=%s')
+        clauses.append("(CASE WHEN state IN ('cancelled','failed') THEN 'CANCELADO' ELSE fulfillment END)=%s")
         params.append(state)
     where = ' AND '.join(clauses)
     with pool.connection() as conn:
@@ -177,7 +184,8 @@ def register_orders(app):
                 conn.execute('UPDATE boutique.products SET stock=stock-%s,reserved=reserved-%s WHERE id=%s', (item['quantity'], item['quantity'], item['product_id']))
                 conn.execute('INSERT INTO boutique.stock_movements(product_id,delta,reason,actor) VALUES (%s,%s,%s,%s)', (item['product_id'], -item['quantity'], 'Compra ' + str(id), row['user_id']))
             payload = dict(row['payload'], shippingTrackingId=str(data['tracking_id'])[:128])
-            row = conn.execute("UPDATE boutique.orders SET state='confirmed',fulfillment='ENVIADO',payload=%s,updated_at=now() WHERE id=%s RETURNING *", (Jsonb(payload), id)).fetchone()
+            row = conn.execute("UPDATE boutique.orders SET state='confirmed',fulfillment='ENVIADO',shipping_carrier='Envío demo',payload=%s,shipment_version=shipment_version+1,updated_at=now() WHERE id=%s RETURNING *", (Jsonb(payload), id)).fetchone()
+            shipment_event(conn, row, row['user_id'], 'Envío generado por checkout')
             audit(conn, row['user_id'], 'order.confirm', str(id), g.request_id)
         return record(row)
 
@@ -211,7 +219,22 @@ def register_orders(app):
             if not row:
                 abort(404)
             items = conn.execute('SELECT product_id,name,sku,quantity,unit_nanos FROM boutique.order_items WHERE order_id=%s', (id,)).fetchall()
-        return dict(order_view(row), Items=[{'Name': i['name'], 'SKU': i['sku'], 'Quantity': i['quantity'], 'Price': money(i['unit_nanos'], row['currency'])} for i in items])
+            events = conn.execute('SELECT * FROM boutique.shipment_events WHERE order_id=%s ORDER BY id DESC LIMIT 100', (id,)).fetchall()
+        return dict(order_view(row), Items=[{'Name': i['name'], 'SKU': i['sku'], 'Quantity': i['quantity'],
+                    'Price': money(i['unit_nanos'], row['currency']), 'Subtotal': money(i['unit_nanos'] * i['quantity'], row['currency'])} for i in items],
+                    ShipmentEvents=[{'Date': e['created_at'].isoformat(), 'Status': e['status'],
+                                     'Carrier': e['carrier'], 'TrackingID': e['tracking_id'],
+                                     'Notes': e['notes'], 'Actor': e['actor']} for e in events])
+
+    @app.patch('/api/v1/orders/<uuid:id>/shipment')
+    @admin(write=True)
+    def shipment(id):
+        with pool.connection() as conn:
+            row = conn.execute('SELECT * FROM boutique.orders WHERE id=%s FOR UPDATE', (id,)).fetchone()
+            if not row:
+                abort(404)
+            updated = update_shipment(conn, row, request.get_json(), g.admin['email'], g.request_id)
+        return order_view(updated)
 
     @app.patch('/api/v1/orders/<uuid:id>/status')
     @admin(write=True)
@@ -223,8 +246,12 @@ def register_orders(app):
                 abort(404)
             if row['state'] != 'confirmed' or row['fulfillment'] != 'ENVIADO' or target != 'ENTREGADO':
                 abort(409, 'Solo se permite ENVIADO → ENTREGADO; cancelar un pago requiere conciliación')
-            conn.execute('UPDATE boutique.orders SET fulfillment=%s,updated_at=now() WHERE id=%s', (target, id))
-            audit(conn, g.admin['email'], 'order.delivered', str(id), g.request_id)
+            update_shipment(conn, row, {'status': target, 'version': row['shipment_version'],
+                            'carrier': row['shipping_carrier'] or 'Envío demo',
+                            'tracking_id': row['payload'].get('shippingTrackingId', ''),
+                            'notes': row['shipping_notes'],
+                            'estimated_delivery': row['estimated_delivery'].isoformat() if row['estimated_delivery'] else ''},
+                            g.admin['email'], g.request_id)
         return {}, 200
 
     @app.post('/api/v1/orders/<uuid:id>/reconcile')

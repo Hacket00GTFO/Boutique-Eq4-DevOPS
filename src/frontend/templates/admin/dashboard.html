@@ -7,6 +7,7 @@
     <div class="admin-main">
         {{ template "admin_topbar" . }}
         <main class="admin-content">
+            {{ template "admin_demo_tools" . }}
 
             <div class="page-head">
                 <div>
@@ -87,7 +88,7 @@
                     <tbody>
                         {{ range .dashboard.RecentOrders }}
                         <tr>
-                            <td class="mono">{{ .ID }}</td>
+                            <td class="mono">{{ if $.backend_enabled }}<a class="link-action" href="{{ $.baseUrl }}/admin/pedidos/detail?id={{ .ID }}">{{ .ID }}</a>{{ else }}{{ .ID }}{{ end }}</td>
                             <td>
                                 <span class="customer"><span class="avatar">{{ .CustomerInit }}</span>{{ .Customer }}</span>
                             </td>
