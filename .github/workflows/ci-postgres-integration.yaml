@@ -12,6 +12,9 @@ jobs:
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@v7
+    - name: Credential bootstrap regression tests
+      shell: pwsh
+      run: ./scripts/test-setup-integration.ps1
     - name: Create isolated local credentials
       shell: pwsh
       run: ./scripts/setup-integration.ps1

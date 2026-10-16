@@ -29,8 +29,18 @@ try {
                 throw "$taskService has an incorrect $taskKey. Recreate with scripts/start-integration.ps1."
             }
         }
-        $taskImage = docker image inspect $taskContainer.Config.Image --format '{{.Id}}'
-        if ($LASTEXITCODE -ne 0 -or $taskImage -ne $taskContainer.Image) {
+        $taskImageMetadata = docker image inspect $taskContainer.Config.Image
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect the current $taskService image." }
+        $taskImage = @($taskImageMetadata | ConvertFrom-Json)[0]
+        $taskImageMatches = $taskImage.Id -eq $taskContainer.Image
+        if (-not $taskImageMatches) {
+            # OCI indexes can change due to attestations while the runnable manifest
+            # stays identical. Compose records that platform manifest in its label.
+            $taskPlatform = "$($taskImage.Os)/$($taskImage.Architecture)"
+            $taskPlatformImage = docker image inspect --platform $taskPlatform $taskContainer.Config.Image --format '{{.Id}}'
+            $taskImageMatches = $LASTEXITCODE -eq 0 -and $taskPlatformImage -eq $taskContainer.Config.Labels.'com.docker.compose.image'
+        }
+        if (-not $taskImageMatches) {
             throw "$taskService is not using the current image. Rebuild and recreate it."
         }
         Write-Output "PASS $taskService runs the current image with the integration configuration."
