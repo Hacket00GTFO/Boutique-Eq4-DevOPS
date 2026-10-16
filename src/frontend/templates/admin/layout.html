@@ -17,10 +17,19 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
     <link rel="stylesheet" type="text/css" href="{{ .baseUrl }}/static/admin/admin.css">
+    <script defer src="{{ .baseUrl }}/static/admin/admin-actions.js"></script>
     <link rel='shortcut icon' type='image/x-icon' href='{{ .baseUrl }}/static/favicon.ico' />
 </head>
 
 <body>
+{{ end }}
+
+{{ define "admin_demo_tools" }}
+{{ if .notice }}<div class="admin-notice" role="status">{{ .notice }}</div>{{ end }}
+{{ if .demo_enabled }}
+<section class="demo-banner"><div><strong>Demo con datos persistentes</strong><p>Catálogo, inventario, pedidos y envíos guardados en PostgreSQL. Puedes modificar los ejemplos.</p></div>
+<div class="page-actions"><form method="POST" action="{{ .baseUrl }}/admin/demo/seed"><input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><button class="btn-light">Cargar datos demo</button></form><a class="btn-dark" href="{{ .baseUrl }}/admin/pedidos/form">Crear pedido demo</a></div></section>
+{{ end }}
 {{ end }}
 
 {{ define "admin_sidebar" }}
@@ -53,20 +62,20 @@
             <span class="material-symbols-outlined">settings</span>
             <span>Ajustes</span>
         </a>
-        <a href="{{ .baseUrl }}/admin/logout" class="nav-item">
-            <span class="material-symbols-outlined">logout</span>
-            <span>Cerrar sesión</span>
-        </a>
+        {{ if .backend_enabled }}
+        <form method="POST" action="{{ .baseUrl }}/admin/logout"><input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><button class="nav-item" type="submit">Cerrar sesión</button></form>
+        {{ else }}<a href="{{ .baseUrl }}/admin/logout" class="nav-item">Cerrar sesión</a>{{ end }}
     </div>
 </aside>
 {{ end }}
 
 {{ define "admin_topbar" }}
 <header class="admin-topbar">
-    <div class="topbar-search">
+    <form method="GET" action="{{ .path }}" class="topbar-search">
         <span class="material-symbols-outlined">search</span>
-        <input type="search" placeholder="{{ .search_placeholder }}">
-    </div>
+        <input type="search" name="q" value="{{ .query.Get "q" }}" placeholder="Buscar...">
+        <button type="submit" class="btn-light">Buscar</button>
+    </form>
     <div class="topbar-actions">
         <button type="button" class="icon-btn" title="Notificaciones">
             <span class="material-symbols-outlined">notifications</span>

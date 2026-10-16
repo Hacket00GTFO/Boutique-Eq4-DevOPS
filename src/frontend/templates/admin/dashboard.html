@@ -7,6 +7,7 @@
     <div class="admin-main">
         {{ template "admin_topbar" . }}
         <main class="admin-content">
+            {{ template "admin_demo_tools" . }}
 
             <div class="page-head">
                 <div>
@@ -14,9 +15,8 @@
                     <p class="page-sub">{{ .subtitle }}</p>
                 </div>
                 <div class="page-actions">
-                    <span class="chip"><span class="material-symbols-outlined">calendar_month</span> Today, Oct 24</span>
-                    <!-- TODO(backend): wire real export endpoint. -->
-                    <button type="button" class="btn-dark"><span class="material-symbols-outlined">download</span> Export</button>
+                    <span class="chip">Ventas confirmadas · USD</span>
+                    {{ if .backend_enabled }}<a class="btn-dark" href="{{ exportURL .query "orders" }}">Exportar pedidos</a>{{ end }}
                 </div>
             </div>
 
@@ -43,11 +43,10 @@
             <section class="dash-grid">
                 <div class="card chart-card">
                     <div class="card-head">
-                        <h2>Ventas del Mes</h2>
-                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">more_horiz</span></button>
+                        <h2>Ventas mensuales del año · USD</h2>
                     </div>
                     <div class="chart-wrap">
-                        <canvas id="monthlySales" data-values="{{ joinInts .dashboard.MonthlySales "," }}"></canvas>
+                        <canvas id="monthlySales" data-values="{{ joinSales .dashboard.MonthlySales }}"></canvas>
                     </div>
                 </div>
 
@@ -66,7 +65,7 @@
                             </div>
                             <span class="product-sales">{{ .Sales }}<small>Sales</small></span>
                         </li>
-                        {{ end }}
+                        {{ else }}<li>Aún no hay ventas confirmadas.</li>{{ end }}
                     </ul>
                 </div>
             </section>
@@ -89,7 +88,7 @@
                     <tbody>
                         {{ range .dashboard.RecentOrders }}
                         <tr>
-                            <td class="mono">{{ .ID }}</td>
+                            <td class="mono">{{ if $.backend_enabled }}<a class="link-action" href="{{ $.baseUrl }}/admin/pedidos/detail?id={{ .ID }}">{{ .ID }}</a>{{ else }}{{ .ID }}{{ end }}</td>
                             <td>
                                 <span class="customer"><span class="avatar">{{ .CustomerInit }}</span>{{ .Customer }}</span>
                             </td>

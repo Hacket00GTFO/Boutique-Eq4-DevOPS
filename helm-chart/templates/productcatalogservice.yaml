@@ -75,6 +75,15 @@ spec:
         env:
         - name: PORT
           value: "3550"
+        {{- if .Values.postgresIntegration.enabled }}
+        - name: CATALOG_API_BASE_URL
+          value: "http://{{ .Values.catalogService.name }}:80"
+        - name: CATALOG_READ_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresIntegration.secretName }}
+              key: CATALOG_READ_TOKEN
+        {{- end }}
         {{- if .Values.opentelemetryCollector.create }}
         - name: COLLECTOR_SERVICE_ADDR
           value: "{{ .Values.opentelemetryCollector.name }}:4317"
@@ -160,6 +169,9 @@ spec:
   egress:
   - hosts:
     - istio-system/*
+    {{- if .Values.postgresIntegration.enabled }}
+    - ./{{ .Values.catalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- end }}
     {{- if .Values.opentelemetryCollector.create }}
     - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
     {{- end }}

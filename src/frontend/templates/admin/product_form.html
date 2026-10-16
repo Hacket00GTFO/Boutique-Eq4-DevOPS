@@ -1,0 +1,18 @@
+{{ define "admin_product_form" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}
+<main class="admin-content"><h1>{{ if .product.ID }}Editar{{ else }}Añadir{{ end }} producto</h1>
+<form class="card admin-edit-form" method="POST" action="{{ .baseUrl }}/admin/catalogo/save">
+<input type="hidden" name="csrf_token" value="{{ .csrf_token }}"><input type="hidden" name="id" value="{{ .product.ID }}"><input type="hidden" name="version" value="{{ .product.Version }}">
+<label>Nombre<input name="name" value="{{ .product.Name }}" required maxlength="255"></label>
+<label>SKU<input name="sku" value="{{ .product.SKU }}" required pattern="[A-Za-z0-9_-]{1,64}"></label>
+<label>Descripción<textarea name="description" maxlength="4000">{{ .product.Description }}</textarea></label>
+<label>Imagen<input name="picture" value="{{ .product.ImgURL }}" placeholder="/static/img/products/sunglasses.jpg"></label>
+<label>Precio USD<input type="number" name="price" min="0" step="0.01" value="{{ .product.PriceValue }}" required></label>
+<label>Categoría<input name="category" value="{{ .product.Category }}" required placeholder="men, women o accessories"></label>
+<label>Variante del SKU<input name="variant" value="{{ .product.Variant }}" required></label>
+<label>Almacén<input name="warehouse" value="{{ .product.Location }}" required></label>
+<label>Estado<select name="active"><option value="true" {{ if eq .product.Status "Active" }}selected{{ end }}>Activo</option><option value="false" {{ if eq .product.Status "Inactive" }}selected{{ end }}>Inactivo</option></select></label>
+<div class="page-actions"><button class="btn-dark" type="submit">Guardar</button><a class="btn-light" href="{{ .baseUrl }}/admin/catalogo">Volver</a></div>
+</form></main></div></div></body></html>
+{{ end }}

@@ -1,7 +1,7 @@
 # Backend del catalogo del Admin Panel (Modulo 0/1). A diferencia de los
 # demas servicios de este chart (gRPC), catalogservice habla HTTP/REST, por
 # eso usa httpGet en los probes en vez de grpc.
-{{- if .Values.catalogService.create }}
+{{- if and .Values.catalogService.create .Values.postgresIntegration.enabled }}
 {{- if .Values.serviceAccounts.create }}
 apiVersion: v1
 kind: ServiceAccount
@@ -62,14 +62,22 @@ spec:
         env:
         - name: PORT
           value: "8080"
-        - name: TABLE_NAME
-          value: {{ .Values.catalogService.tableName | quote }}
-        - name: AWS_REGION
-          value: {{ .Values.catalogService.awsRegion | quote }}
+        - name: DEMO_DATA_ENABLED
+          value: {{ .Values.postgresIntegration.demoDataEnabled | quote }}
+        {{- range $key := list "DATABASE_URL" "ADMIN_API_TOKEN" "CATALOG_READ_TOKEN" "CHECKOUT_API_TOKEN" }}
+        - name: {{ $key }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.postgresIntegration.secretName }}
+              key: {{ $key }}
+        {{- end }}
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         readinessProbe:
           periodSeconds: 5
           httpGet:
-            path: /healthz
+            path: /readyz
             port: 8080
         livenessProbe:
           periodSeconds: 5
@@ -78,6 +86,9 @@ spec:
             port: 8080
         resources:
           {{- toYaml .Values.catalogService.resources | nindent 10 }}
+      volumes:
+      - name: tmp
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

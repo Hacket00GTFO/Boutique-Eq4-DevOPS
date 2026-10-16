@@ -1,5 +1,10 @@
 # AWS Deployment — Online Boutique (ECS + EC2)
 
+This is the historical ECS deployment. The PostgreSQL integration uses the
+EKS/Helm path described in [docs/postgres-integration.md](../docs/postgres-integration.md).
+ECS deployment is opt-in via `ENABLE_ECS_DEPLOY=true` and still requires the
+networking/task-role corrections identified by the integration audit.
+
 This directory contains the ECS task definitions for deploying the Online
 Boutique microservices to Amazon ECS with **EC2 launch type**.
 

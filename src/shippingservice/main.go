@@ -15,6 +15,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -145,6 +147,11 @@ func (s *server) ShipOrder(ctx context.Context, in *pb.ShipOrderRequest) (*pb.Sh
 	// 1. Create a Tracking ID
 	baseAddress := fmt.Sprintf("%s, %s, %s", in.Address.StreetAddress, in.Address.City, in.Address.State)
 	id := CreateTrackingId(baseAddress)
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if keys := md.Get("idempotency-key"); len(keys) > 0 {
+			id = fmt.Sprintf("DEMO-%x", sha256.Sum256([]byte(keys[0])))
+		}
+	}
 
 	// 2. Generate a response.
 	return &pb.ShipOrderResponse{

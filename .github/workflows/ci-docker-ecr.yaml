@@ -11,10 +11,15 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "helm-chart/**"
+      - ".github/workflows/ci-docker-ecr.yaml"
   workflow_dispatch: {}
 
 jobs:
+  integration:
+    uses: ./.github/workflows/ci-postgres-integration.yaml
   build-and-push:
+    needs: integration
     runs-on: ubuntu-24.04
     strategy:
       matrix:

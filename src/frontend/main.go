@@ -109,6 +109,9 @@ func main() {
 			propagation.TraceContext{}, propagation.Baggage{}))
 
 	baseUrl = os.Getenv("BASE_URL")
+	if adminBackendEnabled() && (os.Getenv("ADMIN_API_BASE_URL") == "" || os.Getenv("ADMIN_API_TOKEN") == "") {
+		log.Fatal("backend admin mode requires ADMIN_API_BASE_URL and ADMIN_API_TOKEN")
+	}
 
 	if os.Getenv("ENABLE_TRACING") == "1" {
 		log.Info("Tracing enabled.")
@@ -159,6 +162,7 @@ func main() {
 	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl+"/static/", http.FileServer(http.Dir("./static/"))))
 	r.HandleFunc(baseUrl+"/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
 	r.HandleFunc(baseUrl+"/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
+	r.HandleFunc(baseUrl+"/_readyz", svc.readyHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
 
@@ -168,11 +172,27 @@ func main() {
 	r.HandleFunc(baseUrl+"/admin/login", svc.adminLoginSubmitHandler).Methods(http.MethodPost)
 	adm := r.PathPrefix(baseUrl + "/admin").Subrouter()
 	adm.Use(requireAdminAuth)
+	adm.Use(requireAdminCSRF)
 	adm.HandleFunc("", svc.adminDashboardHandler).Methods(http.MethodGet, http.MethodHead)
 	adm.HandleFunc("/pedidos", svc.adminOrdersHandler).Methods(http.MethodGet, http.MethodHead)
 	adm.HandleFunc("/catalogo", svc.adminCatalogHandler).Methods(http.MethodGet, http.MethodHead)
 	adm.HandleFunc("/inventario", svc.adminInventoryHandler).Methods(http.MethodGet, http.MethodHead)
-	adm.HandleFunc("/logout", svc.adminLogoutHandler).Methods(http.MethodGet)
+	adm.HandleFunc("/logout", svc.adminLogoutHandler).Methods(http.MethodGet, http.MethodPost)
+	adm.HandleFunc("/catalogo/form", svc.adminProductForm).Methods(http.MethodGet)
+	adm.HandleFunc("/catalogo/save", svc.adminSaveProduct).Methods(http.MethodPost)
+	adm.HandleFunc("/catalogo/archive", svc.adminArchiveProduct).Methods(http.MethodPost)
+	adm.HandleFunc("/inventario/adjust", svc.adminAdjustStock).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/detail", svc.adminOrderDetail).Methods(http.MethodGet)
+	adm.HandleFunc("/pedidos/status", svc.adminOrderStatus).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/reconcile", svc.adminReconcileOrder).Methods(http.MethodPost)
+	adm.HandleFunc("/demo/seed", svc.adminDemoSeed).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/form", svc.adminDemoOrderForm).Methods(http.MethodGet)
+	adm.HandleFunc("/pedidos/create-demo", svc.adminDemoOrderCreate).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/shipment", svc.adminShipmentSave).Methods(http.MethodPost)
+	adm.HandleFunc("/pedidos/cancel-demo", svc.adminDemoOrderCancel).Methods(http.MethodPost)
+	adm.HandleFunc("/catalogo/activate", svc.adminActivateProduct).Methods(http.MethodPost)
+	adm.HandleFunc("/inventario/detail", svc.adminInventoryDetail).Methods(http.MethodGet)
+	adm.HandleFunc("/export", svc.adminExport).Methods(http.MethodGet)
 
 	var handler http.Handler = r
 	handler = &logHandler{log: log, next: handler}     // add logging
@@ -180,7 +200,8 @@ func main() {
 	handler = otelhttp.NewHandler(handler, "frontend") // add OTel tracing
 
 	log.Infof("starting server on %s:%s", addr, srvPort)
-	log.Fatal(http.ListenAndServe(addr+":"+srvPort, handler))
+	server := &http.Server{Addr: addr + ":" + srvPort, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	log.Fatal(server.ListenAndServe())
 }
 func initStats(log logrus.FieldLogger) {
 	// TODO(arbrown) Implement OpenTelemtry stats
@@ -236,9 +257,8 @@ func mustMapEnv(target *string, envKey string) {
 
 func mustConnGRPC(ctx context.Context, conn **grpc.ClientConn, addr string) {
 	var err error
-	_, cancel := context.WithTimeout(ctx, time.Second*3)
-	defer cancel()
 	*conn, err = grpc.NewClient(addr,
+		grpc.WithUnaryInterceptor(boundedRPC),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
