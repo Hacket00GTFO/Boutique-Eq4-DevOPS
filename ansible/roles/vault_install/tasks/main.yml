@@ -1,0 +1,46 @@
+- name: Create dedicated Vault group
+  ansible.builtin.group:
+    name: vault
+    system: true
+- name: Create dedicated Vault user
+  ansible.builtin.user:
+    name: vault
+    group: vault
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+- name: Create persistent and configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: vault
+    group: vault
+    mode: '0700'
+  loop: [/opt/vault/data, /var/log/vault, /etc/vault.d, /etc/vault.d/tls]
+- name: Download checksum-verified Vault release
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
+    dest: "/opt/vault/vault-{{ vault_version }}.zip"
+    checksum: "sha256:{{ vault_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+- name: Create versioned binary directory
+  ansible.builtin.file:
+    path: "/opt/vault/{{ vault_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+- name: Extract pinned binary once
+  ansible.builtin.unarchive:
+    src: "/opt/vault/vault-{{ vault_version }}.zip"
+    dest: "/opt/vault/{{ vault_version }}"
+    remote_src: true
+    creates: "/opt/vault/{{ vault_version }}/vault"
+- name: Select installed Vault version
+  ansible.builtin.file:
+    src: "/opt/vault/{{ vault_version }}/vault"
+    dest: /usr/local/bin/vault
+    state: link
+  notify: Restart Vault

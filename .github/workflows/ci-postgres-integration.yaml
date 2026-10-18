@@ -29,6 +29,10 @@ jobs:
     - name: Frontend and checkout integration
       shell: pwsh
       run: ./scripts/test-storefront-integration.ps1
+    - name: Frontend operations handlers and templates
+      run: |
+        docker build --target builder -t boutique-frontend-tests ./src/frontend
+        docker run --rm --mount "type=bind,source=$PWD/src/frontend/templates,target=/src/templates,readonly" --mount "type=bind,source=$PWD/src/frontend/static,target=/src/static,readonly" boutique-frontend-tests go test ./...
     - name: Helm lint
       uses: azure/setup-helm@v4
     - name: Validate base and PostgreSQL charts

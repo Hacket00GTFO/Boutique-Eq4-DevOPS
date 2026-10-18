@@ -32,3 +32,10 @@ gha-creds-*.json
 .env.*
 !.env.example
 __pycache__/
+.vault-lab/
+ansible/*local*.yml
+*.pem
+*.key
+*.pgp
+.tools/
+!terraform/aws/vault/.terraform.lock.hcl

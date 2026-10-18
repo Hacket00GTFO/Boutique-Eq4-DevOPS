@@ -1,0 +1,35 @@
+- name: Generate private TLS key only on the server
+  community.crypto.openssl_privatekey:
+    path: /etc/vault.d/tls/vault.key
+    owner: vault
+    group: vault
+    mode: '0600'
+  no_log: true
+- name: Create certificate request with tunnel and EC2 SANs
+  community.crypto.openssl_csr:
+    path: /etc/vault.d/tls/vault.csr
+    privatekey_path: /etc/vault.d/tls/vault.key
+    common_name: localhost
+    subject_alt_name: >-
+      {{ ['IP:127.0.0.1', 'IP:' ~ private_ip_address]
+         + (['IP:' ~ public_ip_address] if public_ip_address is defined else [])
+         + (vault_dns_names | map('regex_replace', '^', 'DNS:') | list) }}
+    basic_constraints: ['CA:TRUE']
+    basic_constraints_critical: true
+    key_usage: [digitalSignature, keyEncipherment, keyCertSign]
+    extended_key_usage: [serverAuth]
+    owner: vault
+    group: vault
+    mode: '0644'
+- name: Sign dedicated self-signed trust certificate
+  community.crypto.x509_certificate:
+    path: /etc/vault.d/tls/vault.crt
+    csr_path: /etc/vault.d/tls/vault.csr
+    privatekey_path: /etc/vault.d/tls/vault.key
+    provider: selfsigned
+    selfsigned_not_after: '+365d'
+    force: "{{ vault_tls_renew | bool }}"
+    owner: vault
+    group: vault
+    mode: '0644'
+  notify: Restart Vault

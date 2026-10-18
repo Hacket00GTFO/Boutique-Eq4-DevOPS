@@ -72,6 +72,8 @@ body {
 .brand-sub { font-size: 11px; color: #7c7873; margin-top: 2px; }
 
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.nav-section-label { font-size:10px; letter-spacing:.12em; color:#79766f; padding:22px 10px 8px; }
+@media (max-width: 900px) { .nav-section-label { flex-basis:100%; padding:10px 10px 4px; } }
 
 .nav-item {
     display: flex;

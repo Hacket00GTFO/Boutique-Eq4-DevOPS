@@ -1,0 +1,14 @@
+# Isolated demonstration only; never apply this override to the production release.
+catalogService:
+  create: true
+postgresIntegration:
+  enabled: true
+  secretName: boutique-integration
+  demoDataEnabled: true
+  cookieSecure: false # Browser access is through kubectl port-forward in this lab.
+  database:
+    create: true
+frontend:
+  externalService: false
+loadGenerator:
+  create: false

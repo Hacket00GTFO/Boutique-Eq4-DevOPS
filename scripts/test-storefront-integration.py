@@ -216,7 +216,14 @@ finally:
     current = request('/api/v1/products/' + product_id, backend=True)
     request('/admin/catalogo/archive', {'csrf_token': csrf, 'id': product_id, 'version': str(current['Version'])})
 
+assert 'Operación de Vault' in request('/admin/vault')[0]
+assert 'Ejecuciones de Ansible' in request('/admin/ansible')[0]
+operations = json.loads(request('/admin/operaciones/ansible.json')[0])
+assert isinstance(operations['runs'], list)
+passed('authenticated Vault and Ansible views render and return operations data')
 request('/admin/logout', {'csrf_token': csrf})
 assert request('/admin')[1] == '/admin/login'
+assert request('/admin/vault')[1] == '/admin/login'
+assert request('/admin/ansible')[1] == '/admin/login'
 passed('logout invalidates the shared session')
 print(json.dumps({'passed': len(checks), 'order_id': order_id, 'sku_archived': sku}))

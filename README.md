@@ -27,6 +27,19 @@ incidencias y entrega, con historial persistente. [Guía de uso del demo](docs/d
 
 ### Arquitectura de despliegue
 
+La Fase 3 incorpora **Vault en EC2 independiente, Ansible por SSM y entrega de
+secretos desde GitHub Actions a EKS**. El modo `vault-lab` usa un namespace y
+PostgreSQL propios y se activa con `ENABLE_VAULT_LAB=true` después del bootstrap.
+Ver [instalación, custodia, pruebas y recuperación](docs/vault-lab.md) y la
+[matriz de evidencias](docs/vault-evidence.md). La implementación versionada no
+acredita por sí sola un despliegue AWS: las verificaciones remotas se registran
+por separado.
+
+El panel incluye las vistas **Vault** (`/admin/vault`) y **Ansible**
+(`/admin/ansible`), con estado de la bóveda, historial y consola de ejecuciones.
+La [guía de operación del panel](docs/admin-operations.md) explica cómo conectar
+los reportes reales y abrir la UI nativa de Vault.
+
 Antes del primer arranque, o si `.env` falta o está incompleto, ejecutar
 `./scripts/start-integration.ps1`. La preparación recupera las claves desde los
 contenedores existentes y conserva los datos; solo crea contraseñas nuevas para

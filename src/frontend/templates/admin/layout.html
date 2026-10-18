@@ -18,6 +18,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
     <link rel="stylesheet" type="text/css" href="{{ .baseUrl }}/static/admin/admin.css">
     <script defer src="{{ .baseUrl }}/static/admin/admin-actions.js"></script>
+    {{ if .operations }}
+    <link rel="stylesheet" href="{{ .baseUrl }}/static/admin/operations.css">
+    <script defer src="{{ .baseUrl }}/static/admin/operations.js"></script>
+    {{ end }}
     <link rel='shortcut icon' type='image/x-icon' href='{{ .baseUrl }}/static/favicon.ico' />
 </head>
 
@@ -38,7 +42,7 @@
         <span class="brand-name">Apparel Admin</span>
         <span class="brand-sub">Back-office Management</span>
     </div>
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" aria-label="Navegación administrativa">
         <a href="{{ .baseUrl }}/admin" class="nav-item{{ if eq .active "dashboard" }} nav-active{{ end }}">
             <span class="material-symbols-outlined">dashboard</span>
             <span>Dashboard</span>
@@ -54,6 +58,13 @@
         <a href="{{ .baseUrl }}/admin/pedidos" class="nav-item{{ if eq .active "pedidos" }} nav-active{{ end }}">
             <span class="material-symbols-outlined">receipt_long</span>
             <span>Pedidos</span>
+        </a>
+        <span class="nav-section-label">OPERACIONES</span>
+        <a href="{{ .baseUrl }}/admin/vault" class="nav-item{{ if eq .active "vault" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined" aria-hidden="true">shield_lock</span><span>Vault</span>
+        </a>
+        <a href="{{ .baseUrl }}/admin/ansible" class="nav-item{{ if eq .active "ansible" }} nav-active{{ end }}">
+            <span class="material-symbols-outlined" aria-hidden="true">terminal</span><span>Ansible</span>
         </a>
     </nav>
     <div class="sidebar-footer">
@@ -71,11 +82,13 @@
 
 {{ define "admin_topbar" }}
 <header class="admin-topbar">
+    {{ if .operations }}<div class="ops-breadcrumb">Centro de operaciones <span>/</span> {{ .title }}</div>{{ else }}
     <form method="GET" action="{{ .path }}" class="topbar-search">
         <span class="material-symbols-outlined">search</span>
         <input type="search" name="q" value="{{ .query.Get "q" }}" placeholder="Buscar...">
         <button type="submit" class="btn-light">Buscar</button>
     </form>
+    {{ end }}
     <div class="topbar-actions">
         <button type="button" class="icon-btn" title="Notificaciones">
             <span class="material-symbols-outlined">notifications</span>
