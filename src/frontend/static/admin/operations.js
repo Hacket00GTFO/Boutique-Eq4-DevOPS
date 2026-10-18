@@ -61,12 +61,24 @@
         list.replaceChildren(...rows);
         if (focusID) Array.from(list.querySelectorAll('[data-run-id]')).find((link) => link.dataset.runId === focusID)?.focus({preventScroll:true});
     }
+    function eventDetail(event) {
+        const parts = [];
+        if (event.module) parts.push('módulo: ' + event.module);
+        if (event.role) parts.push('rol: ' + event.role);
+        if (event.duration_ms != null) parts.push('duración: ' + (event.duration_ms / 1000).toFixed(3) + ' s');
+        if (event.rc != null) parts.push('salida: ' + event.rc);
+        if (event.attempts != null) parts.push('intento: ' + event.attempts);
+        if (event.items_total != null) parts.push('elementos: ' + event.items_total);
+        if (event.items_failed != null) parts.push('elementos fallidos: ' + event.items_failed);
+        if (event.ignored) parts.push('error ignorado por el playbook');
+        return parts.join(' · ');
+    }
     function renderLog() {
         if (paused || !selected) return;
         const term = find('[data-log-search]').value.toLowerCase();
         const errors = find('[data-errors-only]').checked;
         const events = selected.events || [];
-        const filtered = events.filter((event) => (!errors || ['failed','unreachable'].includes(event.type)) && [event.label,event.host,event.type].join(' ').toLowerCase().includes(term));
+        const filtered = events.filter((event) => (!errors || ['failed','unreachable','retry'].includes(event.type)) && [event.label,event.host,event.type,event.module,event.role,event.diagnostic_text,event.hint,eventDetail(event)].join(' ').toLowerCase().includes(term));
         const output = find('[data-terminal-output]');
         const oldScroll = output.scrollTop;
         const fragment = document.createDocumentFragment();
@@ -74,7 +86,14 @@
             const line = document.createElement('div'); line.className = 'terminal-line'; line.dataset.eventType = event.type;
             const time = document.createElement('span'); time.className = 'terminal-time'; time.textContent = '+' + event.elapsed + 's';
             const type = document.createElement('span'); type.className = 'terminal-kind'; type.textContent = event.type;
-            const message = document.createElement('span'); message.textContent = event.label + (event.host ? ' · ' + event.host : '');
+            const message = document.createElement('span'); message.className = 'terminal-message';
+            const title = document.createElement('span'); title.textContent = event.label + (event.host ? ' · ' + event.host : '');
+            message.append(title);
+            const detail = eventDetail(event);
+            if (detail) { const meta = document.createElement('small'); meta.className = 'terminal-detail'; meta.textContent = detail; message.append(meta); }
+            if (event.diagnostic_text) { const cause = document.createElement('span'); cause.className = 'terminal-diagnostic'; cause.textContent = 'Diagnóstico orientativo: ' + event.diagnostic_text; message.append(cause); }
+            if (event.hint) { const hint = document.createElement('small'); hint.className = 'terminal-detail'; hint.textContent = 'Revisar: ' + event.hint; message.append(hint); }
+            if (event.timestamp) time.title = formatDate(event.timestamp);
             line.append(time,type,message); fragment.append(line);
         });
         if (!filtered.length) {
@@ -131,8 +150,14 @@
         find('[data-log-pause]').addEventListener('click', function () { paused = !paused; this.textContent = paused ? 'Reanudar' : 'Pausar'; this.setAttribute('aria-pressed', String(paused)); if (!paused) renderLog(); });
         find('[data-log-download]').addEventListener('click', function () {
             if (!selected) return;
-            const lines = ['ANSIBLE · ' + selected.playbook, selected.started_at + ' · ' + runState(selected), 'Registro estructurado sin argumentos ni salida de comandos.', ''];
-            (selected.events || []).forEach((event) => lines.push('+' + event.elapsed + 's [' + event.type.toUpperCase() + '] ' + event.label + (event.host ? ' · ' + event.host : '')));
+            const lines = ['ANSIBLE · ' + selected.playbook, selected.started_at + ' · ' + runState(selected), 'Registro detallado: los diagnósticos son orientativos; no incluye argumentos ni salida cruda.', ''];
+            (selected.events || []).forEach((event) => {
+                lines.push((event.timestamp || '+' + event.elapsed + 's') + ' [' + event.type.toUpperCase() + '] ' + event.label + (event.host ? ' · ' + event.host : ''));
+                if (event.task_id) lines.push('  tarea: ' + event.task_id);
+                if (eventDetail(event)) lines.push('  ' + eventDetail(event));
+                if (event.diagnostic_text) lines.push('  Diagnóstico orientativo: ' + event.diagnostic_text);
+                if (event.hint) lines.push('  Revisar: ' + event.hint);
+            });
             lines.push('', 'PLAY RECAP ' + Object.entries(selected.counters).map(([key,value]) => key + '=' + value).join(' '));
             const url = URL.createObjectURL(new Blob([lines.join('\n')], {type:'text/plain;charset=utf-8'}));
             const link = document.createElement('a'); link.href = url; link.download = 'ansible-' + selected.id + '.log'; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);

@@ -68,6 +68,14 @@ protegido. Esto acredita la consola; no equivale a ejecutar `site.yml` en AWS.
 Vault conserva el estado «Sin datos» hasta conectar el colector al servidor.
 Operación y configuración: [guía del panel](admin-operations.md).
 
+El registro ampliado añade módulo, rol, tiempos por tarea, códigos de salida,
+reintentos y diagnósticos orientativos sin salida cruda. Verificación posterior:
+22 pruebas SQL, 10 callback/colector, pruebas Go, lint/syntax Ansible y navegador
+de escritorio/móvil. Se publicó otra ejecución local real: cuatro tareas OK,
+cero cambios y cero fallos; la tarea de comando registra más de un segundo y
+código de salida cero. El historial anterior se conserva. Las pruebas de interfaz
+para fallos usaron una respuesta temporal interceptada, sin publicar datos ficticios.
+
 ## Evidencias a incorporar después de la ejecución remota
 
 | Evidencia | Contenido permitido | Estado |

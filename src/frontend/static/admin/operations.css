@@ -1,3 +1,4 @@
+.terminal-message { min-width:0; }.terminal-message>span,.terminal-detail { display:block; }.terminal-detail { color:#8fa99a; font-size:10px; line-height:1.6; }.terminal-diagnostic { color:#e6bf8b; line-height:1.6; }.terminal-line[data-event-type="retry"] .terminal-kind { color:#e6bf8b; }
 .nav-section-label { font-size:10px; letter-spacing:.12em; color:#79766f; padding:22px 10px 8px; }
 .ops-breadcrumb { color:#68645d; font-size:12px; }.ops-breadcrumb span { padding:0 12px; color:#c5c1ba; }
 .ops-page { max-width:1600px; width:100%; margin:0 auto; }.ops-eyebrow { font-size:10px; font-weight:700; letter-spacing:.15em; color:#6d766e; margin:0 0 10px; }

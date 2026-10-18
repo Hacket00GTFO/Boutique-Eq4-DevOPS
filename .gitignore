@@ -34,6 +34,7 @@ gha-creds-*.json
 __pycache__/
 .vault-lab/
 ansible/*local*.yml
+!ansible/local-check.yml
 *.pem
 *.key
 *.pgp

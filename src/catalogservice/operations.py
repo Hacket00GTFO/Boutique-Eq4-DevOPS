@@ -10,11 +10,71 @@ from psycopg.types.json import Jsonb
 from auth import admin, require_service
 from db import pool
 
-EVENT_TYPES = {'play', 'task', 'ok', 'changed', 'failed', 'unreachable', 'skipped', 'recap'}
+EVENT_TYPES = {'play', 'task', 'ok', 'changed', 'failed', 'unreachable', 'skipped', 'retry', 'recap'}
 COUNTERS = ('ok', 'changed', 'failed', 'unreachable', 'skipped')
 SECRET_ASSIGNMENT = re.compile(r'(?i)\b([\w-]*(?:token|password|secret|credential|unseal|private_key)[\w-]*)\s*[:=]\s*\S+')
 VAULT_TOKEN = re.compile(r'\b(?:hvs|hvb|hvr)\.[A-Za-z0-9._-]+')
 URL_PASSWORD = re.compile(r'\b[a-z][a-z0-9+.-]*://[^\s/@]+:[^\s/@]+@', re.I)
+DIAGNOSTICS = {
+    'tls_verification': ('Error al verificar el certificado TLS.', 'Comprueba la CA, los nombres del certificado y la fecha del sistema.'),
+    'checksum_mismatch': ('La suma de verificación no coincide.', 'Revisa la versión, la descarga y su checksum oficial antes de reintentar.'),
+    'disk_full': ('El destino no tiene espacio disponible.', 'Comprueba el espacio y los inodos del disco.'),
+    'authentication': ('La autenticación fue rechazada.', 'Comprueba la vigencia de la sesión y los permisos del perfil de acceso.'),
+    'permission_denied': ('El sistema rechazó una operación por permisos.', 'Revisa el usuario, become, los permisos del archivo y las políticas de acceso.'),
+    'connection_refused': ('La conexión fue rechazada o interrumpida.', 'Comprueba el servicio, el puerto y la sesión SSM.'),
+    'timeout': ('La operación excedió el tiempo de espera.', 'Comprueba la conectividad y el estado del servicio remoto.'),
+    'not_found': ('No se encontró un archivo o ejecutable requerido.', 'Revisa las dependencias instaladas y las rutas de la tarea.'),
+    'syntax': ('Se detectó un error de sintaxis o de plantilla.', 'Valida el playbook y las variables de la tarea en el controlador.'),
+    'assertion_failed': ('No se cumplió una condición de validación.', 'Revisa las condiciones declaradas en la tarea assert.'),
+    'command_failed': ('El comando devolvió un código de salida distinto de cero.', 'Consulta el código de salida y el registro privado del controlador.'),
+    'module_failed': ('El módulo no pudo completar la tarea.', 'Consulta el registro privado del controlador para conocer el mensaje completo.'),
+    'unreachable': ('Ansible no pudo comunicarse con el destino.', 'Comprueba la sesión SSM, la red y el inventario.'),
+    'condition_false': ('Ansible omitió la tarea o sus elementos.', 'Revisa las condiciones when y el resumen de la ejecución.'),
+}
+
+
+def event_details(event):
+    """Allow structured diagnostics only; never accept caller-provided error prose."""
+    clean = {}
+    if 'timestamp' in event:
+        clean['timestamp'] = timestamp(event['timestamp'])
+    if event.get('task_id'):
+        try:
+            clean['task_id'] = str(uuid.UUID(str(event['task_id'])))
+        except ValueError:
+            raise ValueError('Identificador de tarea inválido') from None
+    if 'duration_ms' in event:
+        clean['duration_ms'] = integer(event['duration_ms'], 604800000)
+    protected = event.get('protected', False)
+    if type(protected) is not bool:
+        raise ValueError('Protección de tarea inválida')
+    clean['protected'] = protected
+    if protected:
+        return clean
+    for field in ('module', 'role'):
+        value = event.get(field, '')
+        if not isinstance(value, str) or (value and not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}', value)):
+            raise ValueError('Módulo o rol inválido')
+        clean[field] = value
+    for field, maximum in (('attempts', 10000), ('items_total', 1000000), ('items_failed', 1000000)):
+        if field in event:
+            clean[field] = integer(event[field], maximum)
+    if 'rc' in event:
+        value = event['rc']
+        if type(value) is not int or not -65535 <= value <= 65535:
+            raise ValueError('Código de salida inválido')
+        clean['rc'] = value
+    if 'ignored' in event:
+        if type(event['ignored']) is not bool:
+            raise ValueError('Estado de error ignorado inválido')
+        clean['ignored'] = event['ignored']
+    code = event.get('diagnostic', '')
+    if not isinstance(code, str) or (code and code not in DIAGNOSTICS):
+        raise ValueError('Diagnóstico inválido')
+    if code:
+        clean['diagnostic'] = code
+        clean['diagnostic_text'], clean['hint'] = DIAGNOSTICS[code]
+    return clean
 
 
 def safe_label(value, limit=160):
@@ -84,9 +144,10 @@ def normalize(data):
         for event in events:
             if not isinstance(event, dict) or event.get('type') not in EVENT_TYPES:
                 raise ValueError('Evento de ejecución inválido')
-            clean.append({'type': event['type'], 'label': safe_label(event.get('label', '')),
+            details = event_details(event)
+            clean.append({'type': event['type'], 'label': 'Contenido protegido (no_log)' if details['protected'] else safe_label(event.get('label', '')),
                           'host': safe_label(event.get('host', ''), 100),
-                          'elapsed': integer(event.get('elapsed', 0), 604800)})
+                          'elapsed': integer(event.get('elapsed', 0), 604800), **details})
         counters = body.get('counters', {})
         if not isinstance(counters, dict):
             raise ValueError('Resumen de ejecución inválido')

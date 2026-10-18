@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
 type operationsVault struct {
@@ -38,11 +40,55 @@ func (v operationsVault) State() string {
 }
 
 type operationsEvent struct {
-	Type    string `json:"type"`
-	Label   string `json:"label"`
-	Host    string `json:"host"`
-	Elapsed int    `json:"elapsed"`
+	Type           string `json:"type"`
+	Label          string `json:"label"`
+	Host           string `json:"host"`
+	Elapsed        int    `json:"elapsed"`
+	Timestamp      string `json:"timestamp,omitempty"`
+	TaskID         string `json:"task_id,omitempty"`
+	Module         string `json:"module,omitempty"`
+	Role           string `json:"role,omitempty"`
+	DurationMS     *int   `json:"duration_ms,omitempty"`
+	RC             *int   `json:"rc,omitempty"`
+	Attempts       *int   `json:"attempts,omitempty"`
+	ItemsTotal     *int   `json:"items_total,omitempty"`
+	ItemsFailed    *int   `json:"items_failed,omitempty"`
+	Protected      bool   `json:"protected,omitempty"`
+	Ignored        bool   `json:"ignored,omitempty"`
+	Diagnostic     string `json:"diagnostic,omitempty"`
+	DiagnosticText string `json:"diagnostic_text,omitempty"`
+	Hint           string `json:"hint,omitempty"`
 }
+
+func (e operationsEvent) Detail() string {
+	parts := []string{}
+	if e.Module != "" {
+		parts = append(parts, "módulo: "+e.Module)
+	}
+	if e.Role != "" {
+		parts = append(parts, "rol: "+e.Role)
+	}
+	if e.DurationMS != nil {
+		parts = append(parts, fmt.Sprintf("duración: %.3f s", float64(*e.DurationMS)/1000))
+	}
+	if e.RC != nil {
+		parts = append(parts, fmt.Sprintf("salida: %d", *e.RC))
+	}
+	if e.Attempts != nil {
+		parts = append(parts, fmt.Sprintf("intento: %d", *e.Attempts))
+	}
+	if e.ItemsTotal != nil {
+		parts = append(parts, fmt.Sprintf("elementos: %d", *e.ItemsTotal))
+	}
+	if e.ItemsFailed != nil {
+		parts = append(parts, fmt.Sprintf("elementos fallidos: %d", *e.ItemsFailed))
+	}
+	if e.Ignored {
+		parts = append(parts, "error ignorado por el playbook")
+	}
+	return strings.Join(parts, " · ")
+}
+
 type operationsCounters struct {
 	OK          int `json:"ok"`
 	Changed     int `json:"changed"`

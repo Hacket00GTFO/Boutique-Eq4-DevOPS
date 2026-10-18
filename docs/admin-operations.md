@@ -17,10 +17,29 @@ la migración `003_operations.sql`; el frontend utiliza la API privada existente
   La consola señala ejecuciones sin actualizaciones durante más de 120 segundos;
   una tarea larga puede seguir ejecutándose, por lo que no se marca fallida.
 
-La consola muestra eventos reales de Ansible, no una shell interactiva. El
-callback excluye argumentos, stdout/stderr, mensajes de módulos y resultados
-`no_log`; captura nombres estáticos de tareas, estados, hosts y recap. El
-backend vuelve a validar y sanear las etiquetas antes de almacenarlas.
+La consola muestra eventos reales de Ansible, no una shell interactiva. Cada
+tarea incluye módulo, rol cuando existe, destino, fecha, duración en milisegundos,
+código de salida cuando el módulo lo proporciona e intentos de reejecución.
+Los bucles muestran cantidades de elementos y fallos, sin sus valores. Los
+contadores avanzan durante la ejecución y el recap final conserva el resultado
+oficial de Ansible, incluidos los errores recuperados por el playbook.
+
+Los fallos muestran un **diagnóstico orientativo** y una comprobación sugerida:
+permisos, autenticación, certificado TLS, checksum, falta de espacio, conexión,
+timeout, dependencia ausente, sintaxis o validación. La clasificación utiliza
+patrones en el controlador, pero no envía los mensajes originales. Si no reconoce
+la causa, indica consultar el registro privado del controlador. No equivale a
+una explicación completa del fallo ni sustituye ese registro.
+
+El callback excluye argumentos, stdout/stderr, excepciones, diferencias de archivos
+y resultados `no_log`. Una tarea protegida conserva solamente estado, identificador
+y tiempos, además del destino; se omiten su nombre, módulo, rol y diagnóstico.
+El backend valida de nuevo los campos y genera el texto de los diagnósticos desde
+un catálogo fijo. Nunca acepta mensajes de error arbitrarios del productor.
+Los registros antiguos siguen disponibles con los campos que recogieron; el
+detalle nuevo aparece en las nuevas ejecuciones. Búsqueda, filtro de errores
+(incluye reintentos) y descarga incorporan los detalles nuevos. Cada reporte
+retiene hasta 400 eventos y se recorta por bytes antes de superar el límite de envío.
 No se entregan tokens de Vault, participaciones ni claves privadas al navegador.
 
 ## Conectar reportes reales
@@ -104,9 +123,18 @@ Validaciones: pruebas Go de autenticación/plantillas/escape, contratos PostgreS
 con permisos, saneamiento y orden de eventos, pruebas del callback con `no_log`
 y comprobación de la UI en navegador. Las pruebas SQL usan `boutique_test`.
 
-Verificación local ejecutada: 20 pruebas SQL, 31 comprobaciones HTTP,
+Verificación inicial ejecutada: 20 pruebas SQL, 31 comprobaciones HTTP,
 `go test ./...`, cinco pruebas callback/colector y 29 pruebas Vault. El navegador
 comprobó login, navegación, filtros, pausa, descarga, ausencia de resultados
 `no_log` y diseño sin desbordamientos a 1440 y 390 píxeles. Se publicó una
-ejecución real de `local-check.yml` (3 OK, 0 cambios, 0 fallos); no se simuló
+ejecución real de `local-check.yml`; ahora incluye una cuarta tarea de un segundo
+para comprobar duración y código de salida (4 OK, 0 cambios, 0 fallos). No se simuló
 una instalación AWS ni se publicó una lectura ficticia de Vault.
+
+Ampliación del registro verificada con 22 pruebas SQL, 10 pruebas del callback y
+colector, `go test ./...`, Ansible syntax-check/lint y una ejecución local real
+con el callback habilitado explícitamente. El navegador comprobó tiempos, módulo,
+código de salida cero, búsqueda por módulo/diagnóstico, descarga detallada,
+protección de resultados y tamaños de escritorio/móvil. Los fallos clasificados
+se probaron en contratos y mediante una respuesta interceptada solo en el navegador;
+no se guardaron ejecuciones ficticias en el panel.

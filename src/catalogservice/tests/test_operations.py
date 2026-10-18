@@ -94,6 +94,38 @@ class OperationsTests(unittest.TestCase):
         self.assertFalse(snapshot['reachable'])
         self.assertIsNone(snapshot['sealed'])
 
+    def test_diagnostics_roundtrip_and_no_log_boundary(self):
+        report = self.report()
+        event = report['report']['events'][0]
+        event.update(type='failed', module='ansible.builtin.command', role='vault_service',
+                     task_id=str(uuid.uuid4()), duration_ms=1250, rc=13, attempts=2,
+                     diagnostic='permission_denied', ignored=True,
+                     diagnostic_text='PRIVATE_RAW_MESSAGE', hint='PRIVATE_RAW_MESSAGE')
+        self.assertEqual(self.send(report).status_code, 202)
+        stored = self.client.get('/api/v1/operations/ansible?run_id=' + self.run_id, headers=self.session).json['selected']['events'][0]
+        self.assertEqual(stored['duration_ms'], 1250)
+        self.assertEqual(stored['rc'], 13)
+        self.assertEqual(stored['diagnostic'], 'permission_denied')
+        self.assertIn('permisos', stored['diagnostic_text'])
+        self.assertNotIn('PRIVATE_RAW_MESSAGE', json.dumps(stored))
+        event.update(protected=True, label='PRIVATE_NO_LOG_NAME', stdout='PRIVATE_RAW_MESSAGE')
+        report['sequence'] = 2
+        self.assertEqual(self.send(report).status_code, 202)
+        stored = self.client.get('/api/v1/operations/ansible?run_id=' + self.run_id, headers=self.session).json['selected']['events'][0]
+        self.assertEqual(stored['label'], 'Contenido protegido (no_log)')
+        self.assertNotIn('PRIVATE', json.dumps(stored))
+        for field in ('module', 'role', 'rc', 'attempts', 'diagnostic', 'hint'):
+            self.assertNotIn(field, stored)
+
+    def test_invalid_diagnostic_metadata_cannot_enter_storage(self):
+        for field, value in [('duration_ms', -1), ('rc', True), ('attempts', 10001),
+                             ('module', '../../shell'), ('diagnostic', 'arbitrary error text'),
+                             ('protected', 'false'), ('ignored', 1), ('task_id', 'invalid')]:
+            with self.subTest(field=field):
+                report = self.report()
+                report['report']['events'][0][field] = value
+                self.assertEqual(self.send(report).status_code, 422)
+
     def test_invalid_reports_are_rejected(self):
         for mutation in ('playbook', 'status', 'events', 'future', 'sequence'):
             report = self.report()

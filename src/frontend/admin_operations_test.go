@@ -69,6 +69,27 @@ func TestOperationsTemplatesEscapeTerminalMessages(t *testing.T) {
 	}
 }
 
+func TestOperationsDetailsRenderDurationsZeroExitCodesAndSafeErrors(t *testing.T) {
+	duration, rc := 1250, 0
+	event := operationsEvent{Type: "failed", Label: "Check service", Module: "ansible.builtin.command",
+		Role: "vault_service", DurationMS: &duration, RC: &rc, Ignored: true,
+		DiagnosticText: "<script>unsafe</script>", Hint: "Check permissions"}
+	var output bytes.Buffer
+	data := operationsData{Selected: &operationsRun{ID: "test", Playbook: "site.yml", Events: []operationsEvent{event}}}
+	err := adminTemplates.ExecuteTemplate(&output, "admin_ansible", injectAdminData(httptest.NewRequest(http.MethodGet, "/admin/ansible", nil), map[string]interface{}{"active": "ansible", "operations": true, "ops": data}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"ansible.builtin.command", "vault_service", "1.250 s", "salida: 0", "error ignorado", "&lt;script&gt;", "Check permissions"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("Missing diagnostic detail: %s", expected)
+		}
+	}
+	if strings.Contains(output.String(), "<script>unsafe</script>") {
+		t.Fatal("Diagnostic HTML was not escaped")
+	}
+}
+
 func TestVaultStatusCannotTreatOldReadingsAsOperational(t *testing.T) {
 	value := true
 	sealed := false
