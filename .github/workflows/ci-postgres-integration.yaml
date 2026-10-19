@@ -36,6 +36,8 @@ jobs:
         docker run --rm --mount "type=bind,source=$PWD/src/frontend/templates,target=/src/templates,readonly" --mount "type=bind,source=$PWD/src/frontend/static,target=/src/static,readonly" boutique-frontend-tests go test ./...
     - name: Helm lint
       uses: azure/setup-helm@v4
+      with:
+        version: v3.22.1
     - name: Validate base and PostgreSQL charts
       run: |
         helm lint ./helm-chart

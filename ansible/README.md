@@ -1,7 +1,8 @@
 # Configuración de Vault por Ansible/SSM
 
-Controlador Ubuntu 24.04 x86_64 nativo o WSL, Python 3.12, AWS CLI y plugin Session Manager.
-Instalar `requirements.txt` y las colecciones de `requirements.yml`.
+Controlador Ubuntu 26.04 x86_64 nativo o WSL, Python 3.14, AWS CLI y plugin Session Manager.
+Instalar `requirements.txt` en un entorno virtual (`python3 -m venv .venv`)
+y las colecciones de `requirements.yml`.
 Usar el inventario dinámico predeterminado; filtra la instancia
 `Name=boutique-vault-lab` en `us-east-1`.
 
