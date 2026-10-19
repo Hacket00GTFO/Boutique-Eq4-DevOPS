@@ -54,7 +54,8 @@ try {
         (New-TaskContainer 'catalogservice' @("ADMIN_API_TOKEN=$($taskExpected.ADMIN_API_TOKEN)", "CATALOG_READ_TOKEN=$($taskExpected.CATALOG_READ_TOKEN)", "CHECKOUT_API_TOKEN=$($taskExpected.CHECKOUT_API_TOKEN)"))
     )
     $taskMockState.Volume = $true
-    Remove-Item -LiteralPath $taskEnv
+    # Unix dotfiles are hidden to PowerShell; remove only this disposable fixture.
+    Remove-Item -LiteralPath $taskEnv -Force
     & $taskSetup | Out-Null
     $taskRecovered = Read-TaskValues
     foreach ($taskKey in $taskExpected.Keys) { Assert-Task ($taskRecovered[$taskKey] -ceq $taskExpected[$taskKey]) "Missing .env did not recover $taskKey." }

@@ -16,6 +16,7 @@ jobs:
       shell: pwsh
       run: ./scripts/test-setup-integration.ps1
     - name: Create isolated local credentials
+      id: credentials
       shell: pwsh
       run: ./scripts/setup-integration.ps1
     - name: Build and start integration
@@ -40,5 +41,5 @@ jobs:
         helm lint ./helm-chart
         helm template boutique ./helm-chart -f helm-chart/values-postgres.yaml --set postgresIntegration.database.create=true >/dev/null
     - name: Cleanup test environment
-      if: always()
+      if: ${{ always() && steps.credentials.outcome == 'success' }}
       run: docker compose down -v
