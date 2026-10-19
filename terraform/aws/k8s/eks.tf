@@ -1,5 +1,5 @@
 # El "cerebro" del cluster: la API de Kubernetes administrada por AWS.
-# No corre workloads por si sola, solo coordina.
+
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = data.aws_iam_role.lab_role.arn
@@ -7,6 +7,21 @@ resource "aws_eks_cluster" "main" {
 
   vpc_config {
     subnet_ids = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+  }
+}
+
+# Por defecto, AWS limita a 1 "salto" de red el acceso de una instancia EC2
+# a su propio servicio de metadatos (de ahi salen las credenciales de
+# LabRole). Un proceso dentro de un pod esta a 2 saltos del host, asi que
+# sin esto boto3 dentro de los contenedores nunca encuentra credenciales
+# (NoCredentialsError). Subimos el limite a 2 para que los pods si puedan.
+resource "aws_launch_template" "nodes" {
+  name_prefix   = "${var.cluster_name}-nodes-"
+  instance_type = "t3.medium"
+
+  metadata_options {
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
   }
 }
 
@@ -19,7 +34,11 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "${var.cluster_name}-nodes"
   node_role_arn   = data.aws_iam_role.lab_role.arn
   subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
-  instance_types  = ["t3.medium"]
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
 
   scaling_config {
     desired_size = 2
