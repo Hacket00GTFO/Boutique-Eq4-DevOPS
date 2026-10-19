@@ -39,6 +39,8 @@ jobs:
 
       - name: Instalar Helm
         uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
 
       - name: Resolver registro ECR
         id: ecr
@@ -103,7 +105,7 @@ jobs:
           aws-region: us-east-1
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v3.22.1
       - name: Resolve ECR registry
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2

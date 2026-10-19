@@ -25,3 +25,7 @@ The ECR, EKS, and data-layer workflows use the `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` repository secrets from the AWS
 Academy Learner Lab session. Refresh them when the session changes. The data
 layer also uses `TF_STATE_BUCKET`.
+
+For the full Learner Lab route with Terraform, Ansible, Vault, and Helm, follow
+the [deployment checklist](../../docs/learner-lab-deployment.md). Install and
+initialize Vault before enabling the `ENABLE_VAULT_LAB` repository variable.

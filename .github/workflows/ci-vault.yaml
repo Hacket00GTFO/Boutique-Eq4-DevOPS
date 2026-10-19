@@ -17,9 +17,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install validation dependencies
-        run: pip install -r ansible/requirements.txt cryptography==45.0.4 PyYAML==6.0.2
+        run: |
+          pip install -r ansible/requirements.txt
+          python -m pip check
       - name: Download verified Vault test binary
         shell: bash
         run: |
@@ -42,7 +44,7 @@ jobs:
           ansible-lint site.yml local-check.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v3.22.1
       - name: Validate Helm and rollout behavior
         run: python scripts/vault/validate_chart.py
       - name: Validate Bash syntax

@@ -3,7 +3,7 @@
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = data.aws_iam_role.lab_role.arn
-  version  = "1.31"
+  version  = "1.35"
 
   vpc_config {
     subnet_ids = [aws_subnet.public_a.id, aws_subnet.public_b.id]

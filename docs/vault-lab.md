@@ -47,13 +47,25 @@ Los valores sensibles no pasan por Helm, Terraform ni argumentos de comandos.
 
 ## 1. Preparar el laboratorio
 
-Desde un controlador Ubuntu 24.04 x86_64 (nativo o WSL) con Python 3.12, AWS CLI, Terraform >=1.5,
-kubectl, Helm 3.17.3, GitHub CLI y GPG:
+Desde un controlador Ubuntu 26.04 x86_64 (nativo o WSL) con Python 3.14, AWS CLI, Terraform >=1.5,
+kubectl 1.35, Helm 3.22.1, GitHub CLI y GPG:
+
+En una distribución WSL nueva, preparar Python del sistema y su soporte para
+entornos virtuales. No instalar los paquetes de este proyecto con `sudo pip`:
 
 ```bash
-python -m venv .venv
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip
+python3 --version
+```
+
+La versión mostrada debe ser Python 3.14.x. Desde la raíz del repositorio:
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r ansible/requirements.txt cryptography==45.0.4 PyYAML==6.0.2
+pip install -r ansible/requirements.txt
+python -m pip check
 bash scripts/vault/install-ssm-plugin.sh
 export AWS_DEFAULT_REGION=us-east-1
 export ANSIBLE_SSM_BUCKET=boutique-vault-ssm-NOMBRE-UNICO
