@@ -70,6 +70,7 @@ services:
       ADMIN_API_BASE_URL: http://catalogservice:8080
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       ADMIN_COOKIE_SECURE: "false"
+      VAULT_PUBLIC_UI_URL: ${VAULT_PUBLIC_UI_URL:-}
       DEMO_DATA_ENABLED: "true"
     depends_on:
       catalogservice:

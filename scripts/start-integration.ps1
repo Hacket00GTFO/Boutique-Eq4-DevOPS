@@ -4,9 +4,7 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $taskRoot
 try {
-    if (-not (Test-Path -LiteralPath (Join-Path $taskRoot '.env'))) {
-        & (Join-Path $PSScriptRoot 'setup-integration.ps1')
-    }
+    & (Join-Path $PSScriptRoot 'setup-integration.ps1')
 
     $taskCompose = @('-f', 'docker-compose.yml', '-f', 'docker-compose.admin.yml')
     docker compose @taskCompose config --quiet

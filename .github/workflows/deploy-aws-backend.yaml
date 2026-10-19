@@ -17,6 +17,7 @@ on:
     paths:
       - "terraform/aws/**"
       - "!terraform/aws/k8s/**"
+      - "!terraform/aws/vault/**"
   workflow_dispatch: {}
 
 jobs:

@@ -12,7 +12,11 @@ jobs:
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@v7
+    - name: Credential bootstrap regression tests
+      shell: pwsh
+      run: ./scripts/test-setup-integration.ps1
     - name: Create isolated local credentials
+      id: credentials
       shell: pwsh
       run: ./scripts/setup-integration.ps1
     - name: Build and start integration
@@ -26,6 +30,10 @@ jobs:
     - name: Frontend and checkout integration
       shell: pwsh
       run: ./scripts/test-storefront-integration.ps1
+    - name: Frontend operations handlers and templates
+      run: |
+        docker build --target builder -t boutique-frontend-tests ./src/frontend
+        docker run --rm --mount "type=bind,source=$PWD/src/frontend/templates,target=/src/templates,readonly" --mount "type=bind,source=$PWD/src/frontend/static,target=/src/static,readonly" boutique-frontend-tests go test ./...
     - name: Helm lint
       uses: azure/setup-helm@v4
     - name: Validate base and PostgreSQL charts
@@ -33,5 +41,5 @@ jobs:
         helm lint ./helm-chart
         helm template boutique ./helm-chart -f helm-chart/values-postgres.yaml --set postgresIntegration.database.create=true >/dev/null
     - name: Cleanup test environment
-      if: always()
+      if: ${{ always() && steps.credentials.outcome == 'success' }}
       run: docker compose down -v

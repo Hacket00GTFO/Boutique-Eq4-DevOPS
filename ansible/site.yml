@@ -1,0 +1,35 @@
+- name: Install and configure the independent Vault server
+  hosts: vault
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Validate SSM and operating system prerequisites
+      ansible.builtin.assert:
+        that:
+          - ansible_aws_ssm_bucket_name | length > 0
+          - ansible_facts.os_family == 'RedHat'
+          - ansible_facts.architecture == 'x86_64'
+        fail_msg: Use Amazon Linux 2023 x86_64 and set ANSIBLE_SSM_BUCKET.
+  roles:
+    - dependencies
+    - vault_install
+    - vault_tls
+    - vault_config
+    - vault_service
+  post_tasks:
+    - name: Apply configuration before checking health
+      ansible.builtin.meta: flush_handlers
+    - name: Check Vault TLS listener without requiring unseal
+      ansible.builtin.uri:
+        url: https://localhost:8200/v1/sys/health
+        ca_path: /etc/vault.d/tls/vault.crt
+        status_code: [200, 429, 501, 503]
+      register: vault_health
+      retries: 12
+      delay: 5
+      until: vault_health.status in [200, 429, 501, 503]
+    - name: Export only the public trust certificate to the controller
+      ansible.builtin.fetch:
+        src: /etc/vault.d/tls/vault.crt
+        dest: "{{ vault_public_certificate }}"
+        flat: true

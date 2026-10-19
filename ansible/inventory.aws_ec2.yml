@@ -1,0 +1,13 @@
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+filters:
+  tag:Name: boutique-vault-lab
+  instance-state-name: running
+hostnames:
+  - instance-id
+groups:
+  vault: "tags.Name == 'boutique-vault-lab'"
+compose:
+  ansible_connection: "'amazon.aws.aws_ssm'"
+  ansible_aws_ssm_region: "'us-east-1'"

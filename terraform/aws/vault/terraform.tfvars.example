@@ -1,0 +1,5 @@
+region           = "us-east-1"
+vpc_id           = "vpc-REPLACE"
+subnet_id        = "subnet-REPLACE"
+instance_profile = "LabInstanceProfile"
+admin_cidrs      = ["192.0.2.10/32"] # Replace with the operator's actual public IP.

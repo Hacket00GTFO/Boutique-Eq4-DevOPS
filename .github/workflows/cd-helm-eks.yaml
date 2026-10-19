@@ -17,9 +17,12 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   helm-deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: vars.ENABLE_VAULT_LAB != 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -63,3 +66,115 @@ jobs:
             --set-string images.repository="$ECR_REGISTRY/boutique-eq4" \
             --set-string images.tag="$IMAGE_TAG" \
             --atomic --wait --wait-for-jobs --timeout 10m
+
+  vault-lab-deploy:
+    if: >-
+      vars.ENABLE_VAULT_LAB == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    environment: vault-lab
+    concurrency:
+      group: boutique-vault-lab-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      IMAGE_TAG: ${{ github.event.workflow_run.head_sha || inputs.image_tag }}
+      VAULT_ADDR: https://127.0.0.1:18200
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.image_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require an immutable release from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo 'A full release SHA is required'; exit 1; }
+          git merge-base --is-ancestor "$IMAGE_TAG" origin/main
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Resolve ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Verify images and persistent storage driver
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          aws eks describe-addon --cluster-name boutique-eq4-eks --addon-name aws-ebs-csi-driver --query 'addon.status' --output text | grep -qx ACTIVE
+          for service in adservice cartservice catalogservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
+            aws ecr describe-images --repository-name "boutique-eq4/$service" --image-ids "imageTag=$IMAGE_TAG" >/dev/null
+          done
+          kubectl get namespace boutique-vault-lab >/dev/null
+      - name: Install checksum-verified SSM plugin
+        run: bash scripts/vault/install-ssm-plugin.sh
+      - name: Open SSM tunnel and verify Vault TLS
+        env:
+          VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
+          VAULT_CA_CERT_B64: ${{ vars.VAULT_CA_CERT_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export VAULT_CACERT="$RUNNER_TEMP/vault-ca.pem"
+          test -n "$VAULT_INSTANCE_ID" && test -n "$VAULT_CA_CERT_B64"
+          printf '%s' "$VAULT_CA_CERT_B64" | base64 --decode > "$VAULT_CACERT"
+          python scripts/vault/ssm_tunnel.py --instance-id "$VAULT_INSTANCE_ID" --pid-file "$RUNNER_TEMP/vault-tunnel.pid" > "$RUNNER_TEMP/vault-tunnel.log" 2>&1 &
+          python scripts/vault/health.py
+      - name: Read application secrets from Vault
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://127.0.0.1:18200
+          method: token
+          token: ${{ secrets.VAULT_CI_TOKEN }}
+          caCertificate: ${{ vars.VAULT_CA_CERT_B64 }}
+          tlsSkipVerify: false
+          exportEnv: false
+          exportToken: false
+          outputToken: false
+          ignoreNotFound: false
+          secrets: secret/data/boutique/lab/integration * | BOUTIQUE_
+      - name: Deliver Secret, migrate, deploy and verify functionality
+        env:
+          DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_MIGRATION_DATABASE_URL }}
+          APP_DB_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_APP_DB_PASSWORD }}
+          ADMIN_EMAIL: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_PASSWORD }}
+          ADMIN_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_API_TOKEN }}
+          CATALOG_READ_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CATALOG_READ_TOKEN }}
+          CHECKOUT_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CHECKOUT_API_TOKEN }}
+          POSTGRES_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_POSTGRES_PASSWORD }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        shell: bash
+        run: python scripts/vault/deploy.py --registry "$ECR_REGISTRY" --image-tag "$IMAGE_TAG" --revision "$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
+      - name: Close remote SSM session and remove temporary trust files
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.pid" ]]; then
+            kill -TERM "$(cat "$RUNNER_TEMP/vault-tunnel.pid")" 2>/dev/null || true
+            for attempt in {1..45}; do
+              [[ ! -f "$RUNNER_TEMP/vault-tunnel.pid" ]] && break
+              sleep 1
+            done
+          fi
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.session" ]]; then
+            aws ssm terminate-session --region us-east-1 --session-id "$(cat "$RUNNER_TEMP/vault-tunnel.session")" >/dev/null
+          fi
+          rm -f "$RUNNER_TEMP/vault-ca.pem" "$RUNNER_TEMP/vault-tunnel.pid" "$RUNNER_TEMP/vault-tunnel.session" "$RUNNER_TEMP/vault-tunnel.log"
