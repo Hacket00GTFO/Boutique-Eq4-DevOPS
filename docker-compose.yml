@@ -2,7 +2,9 @@
 # Levanta todos los microservicios del backend y el frontend en una sola red.
 #
 # Uso:
-#   docker-compose up -d --build              # levanta todo (sin shopping-assistant ni loadgenerator)
+#   ./scripts/start-integration.ps1           # integración con PostgreSQL y panel persistente
+#   docker-compose up -d --build              # integración (carga docker-compose.override.yml)
+#   docker compose -f docker-compose.yml up -d # demo mock explícito, sin PostgreSQL
 #   docker-compose --profile loadgen up -d --build   # incluye el generador de carga
 #   docker-compose --profile assistant up -d --build # incluye shopping-assistant (requiere GCP)
 #

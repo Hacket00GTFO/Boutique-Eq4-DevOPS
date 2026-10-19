@@ -44,6 +44,9 @@ spec:
         app: {{ .Values.frontend.name }}
       annotations:
         sidecar.istio.io/rewriteAppHTTPProbers: "true"
+        {{- if and .Values.postgresIntegration.enabled .Values.postgresIntegration.rolloutRevision }}
+        boutique.dev/secret-revision: {{ .Values.postgresIntegration.rolloutRevision | quote }}
+        {{- end }}
     spec:
       {{- if .Values.serviceAccounts.create }}
       serviceAccountName: {{ .Values.frontend.name }}
@@ -75,8 +78,9 @@ spec:
           - containerPort: 8080
           readinessProbe:
             initialDelaySeconds: 10
+            timeoutSeconds: 5
             httpGet:
-              path: "/_healthz"
+              path: "/_readyz"
               port: 8080
               httpHeaders:
               - name: "Cookie"
@@ -92,6 +96,23 @@ spec:
           env:
           - name: PORT
             value: "8080"
+          {{- if .Values.postgresIntegration.enabled }}
+          - name: ADMIN_DATA_MODE
+            value: backend
+          - name: DEMO_DATA_ENABLED
+            value: {{ .Values.postgresIntegration.demoDataEnabled | quote }}
+          - name: ADMIN_API_BASE_URL
+            value: "http://{{ .Values.catalogService.name }}:80"
+          - name: VAULT_PUBLIC_UI_URL
+            value: {{ .Values.operations.vaultUIURL | quote }}
+          - name: ADMIN_COOKIE_SECURE
+            value: {{ .Values.postgresIntegration.cookieSecure | quote }}
+          - name: ADMIN_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.postgresIntegration.secretName }}
+                key: ADMIN_API_TOKEN
+          {{- end }}
           - name: PRODUCT_CATALOG_SERVICE_ADDR
             value: "{{ .Values.productCatalogService.name }}:3550"
           - name: CURRENCY_SERVICE_ADDR
@@ -215,6 +236,9 @@ spec:
   egress:
   - hosts:
     - istio-system/*
+    {{- if .Values.postgresIntegration.enabled }}
+    - ./{{ .Values.catalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- end }}
     - ./{{ .Values.adService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.cartService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.checkoutService.name }}.{{ .Release.Namespace }}.svc.cluster.local

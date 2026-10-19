@@ -1,0 +1,84 @@
+# PostgreSQL extension: docker compose -f docker-compose.yml -f docker-compose.admin.yml up -d --build
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: boutique
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/setup-integration.ps1 first}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Required}
+    volumes:
+      - boutique-postgres:/var/lib/postgresql/data
+      - ./infrastructure/postgres/00-app-role.sql:/docker-entrypoint-initdb.d/00-app-role.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "boutique"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: src/catalogservice
+    image: catalogservice:local
+    command: ["python", "migrate.py"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/boutique
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@boutique.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Required}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Required}
+      SEED_CATALOG: "true"
+    volumes:
+      - ./src/productcatalogservice/products.json:/seed/products.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+  catalogservice:
+    build: src/catalogservice
+    image: catalogservice:local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://boutique_app:${APP_DB_PASSWORD}@postgres:5432/boutique
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?Required}
+      CATALOG_READ_TOKEN: ${CATALOG_READ_TOKEN:?Required}
+      CHECKOUT_API_TOKEN: ${CHECKOUT_API_TOKEN:?Required}
+      DEMO_DATA_ENABLED: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/readyz',timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+  productcatalogservice:
+    environment:
+      CATALOG_API_BASE_URL: http://catalogservice:8080
+      CATALOG_READ_TOKEN: ${CATALOG_READ_TOKEN}
+    depends_on:
+      catalogservice:
+        condition: service_healthy
+  checkoutservice:
+    environment:
+      ORDER_API_BASE_URL: http://catalogservice:8080
+      CHECKOUT_API_TOKEN: ${CHECKOUT_API_TOKEN}
+    depends_on:
+      catalogservice:
+        condition: service_healthy
+  frontend:
+    environment:
+      ADMIN_DATA_MODE: backend
+      ADMIN_API_BASE_URL: http://catalogservice:8080
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      ADMIN_COOKIE_SECURE: "false"
+      VAULT_PUBLIC_UI_URL: ${VAULT_PUBLIC_UI_URL:-}
+      DEMO_DATA_ENABLED: "true"
+    depends_on:
+      catalogservice:
+        condition: service_healthy
+  redis-cart:
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - boutique-redis:/data
+volumes:
+  boutique-postgres:
+  boutique-redis:

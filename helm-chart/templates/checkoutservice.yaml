@@ -40,6 +40,10 @@ spec:
       app: {{ .Values.checkoutService.name }}
   template:
     metadata:
+      {{- if and .Values.postgresIntegration.enabled .Values.postgresIntegration.rolloutRevision }}
+      annotations:
+        boutique.dev/secret-revision: {{ .Values.postgresIntegration.rolloutRevision | quote }}
+      {{- end }}
       labels:
         app: {{ .Values.checkoutService.name }}
     spec:
@@ -80,6 +84,15 @@ spec:
         env:
         - name: PORT
           value: "5050"
+        {{- if .Values.postgresIntegration.enabled }}
+        - name: ORDER_API_BASE_URL
+          value: "http://{{ .Values.catalogService.name }}:80"
+        - name: CHECKOUT_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresIntegration.secretName }}
+              key: CHECKOUT_API_TOKEN
+        {{- end }}
         - name: PRODUCT_CATALOG_SERVICE_ADDR
           value: "{{ .Values.productCatalogService.name }}:3550"
         - name: SHIPPING_SERVICE_ADDR
@@ -163,6 +176,9 @@ spec:
   egress:
   - hosts:
     - istio-system/*
+    {{- if .Values.postgresIntegration.enabled }}
+    - ./{{ .Values.catalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- end }}
     - ./{{ .Values.cartService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.currencyService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.emailService.name }}.{{ .Release.Namespace }}.svc.cluster.local

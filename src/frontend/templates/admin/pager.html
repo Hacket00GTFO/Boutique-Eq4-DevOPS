@@ -1,0 +1,7 @@
+{{ define "admin_pager" }}
+<div class="table-foot"><span>Mostrando {{ .page.ShowingFrom }}–{{ .page.ShowingTo }} de {{ .page.Total }}</span><div class="pager">
+{{ if gt .page.CurrentPage 1 }}<a class="btn-light" href="{{ pageURL .path .query (add .page.CurrentPage -1) }}">Anterior</a>{{ end }}
+<span>Página {{ .page.CurrentPage }} de {{ .page.TotalPages }}</span>
+{{ if lt .page.CurrentPage .page.TotalPages }}<a class="btn-light" href="{{ pageURL .path .query (add .page.CurrentPage 1) }}">Siguiente</a>{{ end }}
+</div></div>
+{{ end }}

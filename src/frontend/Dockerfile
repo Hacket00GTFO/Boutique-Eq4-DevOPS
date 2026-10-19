@@ -23,7 +23,10 @@ WORKDIR /src
 # restore dependencies
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY *.go ./
+COPY genproto ./genproto
+COPY money ./money
+COPY validator ./validator
 
 # Skaffold passes in debug-oriented compiler flags
 ARG SKAFFOLD_GO_GCFLAGS

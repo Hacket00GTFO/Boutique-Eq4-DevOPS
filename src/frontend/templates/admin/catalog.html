@@ -1,84 +1,9 @@
-<!-- Admin panel — Gestión de Catálogo -->
-
 {{ define "admin_catalog" }}
 {{ template "admin_head" . }}
-<div class="admin-shell">
-    {{ template "admin_sidebar" . }}
-    <div class="admin-main">
-        {{ template "admin_topbar" . }}
-        <main class="admin-content">
-
-            <div class="page-head">
-                <div>
-                    <h1>{{ .title }}</h1>
-                    <p class="page-sub">{{ .subtitle }}</p>
-                </div>
-                <div class="page-actions">
-                    <!-- TODO(backend): product creation form / endpoint. -->
-                    <button type="button" class="btn-dark"><span class="material-symbols-outlined">add</span> Añadir Producto</button>
-                </div>
-            </div>
-
-            <div class="toolbar">
-                <div class="tabs">
-                    <a href="{{ .baseUrl }}/admin/catalogo?category=all" class="tab{{ if eq .page.ActiveCategory "all" }} tab-active{{ end }}">All Products</a>
-                    <a href="{{ .baseUrl }}/admin/catalogo?category=men" class="tab{{ if eq .page.ActiveCategory "men" }} tab-active{{ end }}">Men</a>
-                    <a href="{{ .baseUrl }}/admin/catalogo?category=women" class="tab{{ if eq .page.ActiveCategory "women" }} tab-active{{ end }}">Women</a>
-                    <a href="{{ .baseUrl }}/admin/catalogo?category=accessories" class="tab{{ if eq .page.ActiveCategory "accessories" }} tab-active{{ end }}">Accessories</a>
-                </div>
-                <div class="page-actions">
-                    <button type="button" class="btn-light"><span class="material-symbols-outlined">filter_list</span> Filters</button>
-                    <button type="button" class="btn-light"><span class="material-symbols-outlined">download</span> Export</button>
-                </div>
-            </div>
-
-            <section class="card">
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>IMG</th>
-                            <th>PRODUCT NAME</th>
-                            <th>CATEGORY</th>
-                            <th class="num">PRICE</th>
-                            <th>STATUS</th>
-                            <th class="num">ACTIONS</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{ range .page.Products }}
-                        <tr>
-                            <td><img class="product-thumb" src="{{ .ImgURL }}" alt="{{ .Name }}"></td>
-                            <td>{{ .Name }}</td>
-                            <td class="muted">{{ .Category }}</td>
-                            <td class="num">{{ .Price }}</td>
-                            <td><span class="badge {{ statusClass .Status }}">{{ .Status }}</span></td>
-                            <!-- TODO(backend): edit/delete product endpoints. -->
-                            <td class="num row-actions">
-                                <button type="button" class="icon-btn" title="Editar"><span class="material-symbols-outlined">edit</span></button>
-                                <button type="button" class="icon-btn" title="Eliminar"><span class="material-symbols-outlined">delete</span></button>
-                            </td>
-                        </tr>
-                        {{ end }}
-                    </tbody>
-                </table>
-                <div class="table-foot">
-                    <span>Showing {{ .page.ShowingFrom }} to {{ .page.ShowingTo }} of {{ .page.Total }} products</span>
-                    <!-- TODO(backend): server-side pagination via ?page=. -->
-                    <div class="pager pager-nums">
-                        <span class="page-num page-current">{{ .page.CurrentPage }}</span>
-                        <span class="page-num">2</span>
-                        <span class="page-num">3</span>
-                        <span class="page-num">…</span>
-                        <span class="page-num">{{ .page.TotalPages }}</span>
-                        <button type="button" class="icon-btn"><span class="material-symbols-outlined">chevron_right</span></button>
-                    </div>
-                </div>
-            </section>
-
-        </main>
-    </div>
-</div>
-</body>
-
-</html>
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}<main class="admin-content">
+{{ template "admin_demo_tools" . }}<div class="page-head"><div><h1>{{ .title }}</h1><p class="page-sub">Productos disponibles en la tienda.</p></div>{{ if .backend_enabled }}<a class="btn-dark" href="{{ .baseUrl }}/admin/catalogo/form">Añadir producto</a>{{ end }}</div>
+<div class="toolbar"><form method="GET"><label>Categoría <select name="category"><option value="all">Todas</option>{{ if .backend_enabled }}{{ range .page.CategoryOptions }}<option value="{{ . }}" {{ if eq $.page.ActiveCategory . }}selected{{ end }}>{{ . }}</option>{{ end }}{{ else }}<option value="men" {{ if eq .page.ActiveCategory "men" }}selected{{ end }}>Hombre</option><option value="women" {{ if eq .page.ActiveCategory "women" }}selected{{ end }}>Mujer</option><option value="accessories" {{ if eq .page.ActiveCategory "accessories" }}selected{{ end }}>Accesorios</option>{{ end }}</select></label><label>Estado <select name="active"><option value="">Todos</option><option value="true" {{ if eq (.query.Get "active") "true" }}selected{{ end }}>Activos</option><option value="false" {{ if eq (.query.Get "active") "false" }}selected{{ end }}>Archivados</option></select></label><input name="q" value="{{ .query.Get "q" }}" placeholder="Nombre o SKU"><button class="btn-light">Filtrar</button></form>{{ if .backend_enabled }}<a class="btn-light" href="{{ exportURL .query "products" }}">Exportar CSV</a>{{ end }}</div>
+<section class="card"><table class="admin-table"><thead><tr><th>Imagen</th><th>Producto</th><th>SKU / Categoría</th><th>Precio</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
+{{ range .page.Products }}<tr><td><img class="product-thumb" src="{{ .ImgURL }}" alt="{{ .Name }}"></td><td>{{ .Name }}</td><td>{{ .SKU }}<br>{{ .Category }}</td><td>{{ .Price }}</td><td><span class="badge {{ statusClass .Status }}">{{ .Status }}</span></td><td>{{ if $.backend_enabled }}<div class="table-actions"><a class="btn-light" href="{{ $.baseUrl }}/admin/catalogo/form?id={{ .ID }}">Editar</a><a class="btn-light" href="{{ $.baseUrl }}/admin/inventario/detail?id={{ .ID }}">Inventario</a>{{ if eq .Status "Active" }}<form method="POST" action="{{ $.baseUrl }}/admin/catalogo/archive" data-confirm="¿Archivar este producto?"><input type="hidden" name="csrf_token" value="{{ $.csrf_token }}"><input type="hidden" name="id" value="{{ .ID }}"><input type="hidden" name="version" value="{{ .Version }}"><button class="btn-light" type="submit">Archivar</button></form>{{ else }}<form method="POST" action="{{ $.baseUrl }}/admin/catalogo/activate"><input type="hidden" name="csrf_token" value="{{ $.csrf_token }}"><input type="hidden" name="id" value="{{ .ID }}"><input type="hidden" name="version" value="{{ .Version }}"><button class="btn-light">Activar</button></form>{{ end }}</div>{{ end }}</td></tr>{{ else }}<tr><td colspan="6">No hay productos para estos filtros.</td></tr>{{ end }}
+</tbody></table>{{ template "admin_pager" . }}</section></main></div></div></body></html>
 {{ end }}

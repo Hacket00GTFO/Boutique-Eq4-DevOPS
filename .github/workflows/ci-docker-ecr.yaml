@@ -11,10 +11,19 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "helm-chart/**"
+      - "scripts/vault/**"
+      - ".github/workflows/cd-helm-eks.yaml"
+      - ".github/workflows/ci-docker-ecr.yaml"
   workflow_dispatch: {}
 
 jobs:
+  integration:
+    uses: ./.github/workflows/ci-postgres-integration.yaml
+  vault-security:
+    uses: ./.github/workflows/ci-vault.yaml
   build-and-push:
+    needs: [integration, vault-security]
     runs-on: ubuntu-24.04
     strategy:
       matrix:
