@@ -27,6 +27,10 @@ spec:
       app: {{ .Values.catalogService.name }}
   template:
     metadata:
+      {{- if .Values.postgresIntegration.rolloutRevision }}
+      annotations:
+        boutique.dev/secret-revision: {{ .Values.postgresIntegration.rolloutRevision | quote }}
+      {{- end }}
       labels:
         app: {{ .Values.catalogService.name }}
     spec:

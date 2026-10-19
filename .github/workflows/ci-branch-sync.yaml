@@ -1,0 +1,15 @@
+name: Branch synchronization regression tests
+on:
+  pull_request:
+    paths: ['scripts/branch-sync/**', '.github/workflows/sync-branches.yaml', '.github/workflows/ci-branch-sync.yaml']
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  branch-sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Exercise synchronization against disposable Git remotes
+        run: python3 -m unittest discover -s scripts/branch-sync/tests -v

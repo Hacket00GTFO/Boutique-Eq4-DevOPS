@@ -3,7 +3,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-migrate-{{ (.Values.images.tag | default .Chart.AppVersion) | sha256sum | trunc 8 }}
+  name: {{ .Release.Name | trunc 35 | trimSuffix "-" }}-migrate-{{ printf "%s:%s" (.Values.images.tag | default .Chart.AppVersion) .Values.postgresIntegration.rolloutRevision | sha256sum | trunc 12 }}
   namespace: {{ .Release.Namespace }}
 spec:
   backoffLimit: 6

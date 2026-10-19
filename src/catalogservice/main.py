@@ -77,7 +77,9 @@ from catalog import register_catalog
 from orders import register_orders
 from reports import register_reports
 from demo import register_demo
+from operations import register_operations
 register_catalog(app)
 register_orders(app)
 register_reports(app)
 register_demo(app)
+register_operations(app)

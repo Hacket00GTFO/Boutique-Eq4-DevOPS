@@ -93,9 +93,14 @@ catalogService:
       memory: 512Mi
 
 # Opt-in PostgreSQL backend; secret contents are documented in docs/postgres-integration.md.
+operations:
+  vaultUIURL: "" # Optional verified HTTPS address for the operator's browser.
+
 postgresIntegration:
   enabled: false
   secretName: boutique-integration
+  # Non-secret deployment attempt ID; rolls consumers and reruns migrations.
+  rolloutRevision: ""
   cookieSecure: true
   demoDataEnabled: false
   databaseCIDR: ""

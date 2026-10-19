@@ -27,6 +27,24 @@ incidencias y entrega, con historial persistente. [Guía de uso del demo](docs/d
 
 ### Arquitectura de despliegue
 
+La Fase 3 incorpora **Vault en EC2 independiente, Ansible por SSM y entrega de
+secretos desde GitHub Actions a EKS**. El modo `vault-lab` usa un namespace y
+PostgreSQL propios y se activa con `ENABLE_VAULT_LAB=true` después del bootstrap.
+Ver [instalación, custodia, pruebas y recuperación](docs/vault-lab.md) y la
+[matriz de evidencias](docs/vault-evidence.md). La implementación versionada no
+acredita por sí sola un despliegue AWS: las verificaciones remotas se registran
+por separado.
+
+El panel incluye las vistas **Vault** (`/admin/vault`) y **Ansible**
+(`/admin/ansible`), con estado de la bóveda, historial y consola de ejecuciones.
+La [guía de operación del panel](docs/admin-operations.md) explica cómo conectar
+los reportes reales y abrir la UI nativa de Vault.
+
+Antes del primer arranque, o si `.env` falta o está incompleto, ejecutar
+`./scripts/start-integration.ps1`. La preparación recupera las claves desde los
+contenedores existentes y conserva los datos; solo crea contraseñas nuevas para
+una base nueva. El archivo `.env` es local y está excluido de Git.
+
 La integración nueva usa **Docker Compose local y EKS/Helm** con PostgreSQL privado. Activación en PowerShell: `./scripts/start-integration.ps1`; genera las credenciales locales si faltan, inicia ambos archivos de Compose y verifica las imágenes, la configuración activa y la disponibilidad del frontend. Con `.env` configurado, `docker compose up -d --build` también inicia la integración: carga automáticamente `docker-compose.override.yml`, que reutiliza `docker-compose.admin.yml`. En EKS se usa `helm-chart/values-postgres.yaml` y un Secret de entorno. La arquitectura ECS descrita a continuación es histórica y requiere las correcciones de red/roles documentadas en la auditoría; no activa PostgreSQL automáticamente.
 
 - **Registro de contenedores:** Amazon ECR, un repositorio por servicio bajo un prefijo compartido (`<account>.dkr.ecr.<region>.amazonaws.com/boutique/<service>`).

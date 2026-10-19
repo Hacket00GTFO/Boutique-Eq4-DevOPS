@@ -1,0 +1,4 @@
+- name: Install pinned-platform dependencies
+  ansible.builtin.dnf:
+    name: [unzip, openssl, python3-cryptography, logrotate, ca-certificates]
+    state: present

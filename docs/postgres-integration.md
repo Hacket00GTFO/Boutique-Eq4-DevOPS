@@ -13,7 +13,7 @@ Desde la raíz del repo, en PowerShell:
 ./scripts/start-integration.ps1
 ```
 
-El script genera `.env` si falta, valida Compose, construye e inicia ambos
+El script prepara o recupera `.env`, valida Compose, construye e inicia ambos
 archivos y comprueba las dependencias del frontend en `/_readyz`. Funciona en
 Windows PowerShell 5.1 y PowerShell 7. Para iniciar usando imágenes ya
 construidas, agregar `-SkipBuild`. También se puede ejecutar manualmente:
@@ -27,8 +27,17 @@ Tienda: `http://localhost:8080`. Administración:
 `http://localhost:8080/admin/login`. Las credenciales `ADMIN_EMAIL` y
 `ADMIN_PASSWORD` están en `.env`, que el script genera con secretos aleatorios
 independientes y que Git excluye. No hay contraseña predeterminada en modo
-backend. El script no sobrescribe un `.env` existente; completar las claves
-faltantes según `.env.example`. Usar contraseñas URL-safe en las URLs locales.
+backend. El script conserva las claves existentes y recupera las ausentes o
+vacías desde los contenedores de este mismo workspace, incluido el migrador
+detenido. Solo genera credenciales nuevas si no hay una base PostgreSQL existente.
+Si solo queda el volumen y faltan claves irrecuperables, se detiene sin cambiar
+el archivo ni regenerar contraseñas: restaurar el `.env` original. Docker Desktop
+debe estar iniciado para comprobarlo. Usar contraseñas URL-safe en las URLs locales.
+
+Si Compose informa que faltan `POSTGRES_PASSWORD`, `ADMIN_API_TOKEN` u otras
+variables, ejecutar primero `./scripts/setup-integration.ps1` o usar directamente
+`./scripts/start-integration.ps1`. Compose no ejecuta el script de preparación
+por sí mismo; `.env` es local y no se incluye en Git.
 
 Este arranque ejecuta las migraciones antes del backend. El seed de desarrollo
 importa los nueve productos existentes con 100 unidades de stock de demo cada

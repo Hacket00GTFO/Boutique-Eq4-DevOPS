@@ -1,0 +1,23 @@
+- name: Validación local del registro de ejecuciones
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Comprobar el controlador Python
+      ansible.builtin.assert:
+        that: ansible_playbook_python | length > 0
+    - name: Confirmar registro de tareas sin cambios de infraestructura
+      ansible.builtin.debug:
+        msg: El callback registra estados y contadores; no captura esta salida.
+    - name: Comprobar duración y código de salida del controlador
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - "import time; time.sleep(1)"
+      changed_when: false
+    - name: Comprobar omisión de resultados protegidos
+      ansible.builtin.debug:
+        msg: CALLBACK_TEST_PRIVATE_VALUE
+      no_log: true

@@ -27,11 +27,18 @@ on:
 jobs:
   terraform-validate-ci:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        directory: [terraform, terraform/aws, terraform/aws/bootstrap, terraform/aws/k8s, terraform/aws/vault]
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.12.2"
       - name: terraform init & validate
         run: |
-          cd terraform/
           terraform init -backend=false
           terraform validate

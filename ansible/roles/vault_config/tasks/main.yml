@@ -1,0 +1,29 @@
+- name: Write persistent Raft and TLS configuration
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: /etc/vault.d/vault.hcl
+    owner: vault
+    group: vault
+    mode: '0600'
+  notify: Restart Vault
+- name: Install audit log rotation
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/vault
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      /var/log/vault/audit.json {
+        daily
+        maxsize 50M
+        rotate 7
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0600 vault vault
+        sharedscripts
+        postrotate
+          /bin/systemctl kill --kill-who=main --signal=HUP vault.service
+        endscript
+      }

@@ -1,0 +1,51 @@
+name: Vault security and delivery checks
+on:
+  pull_request:
+    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+  push:
+    branches: [main]
+    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+  workflow_dispatch: {}
+  workflow_call: {}
+permissions:
+  contents: read
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install validation dependencies
+        run: pip install -r ansible/requirements.txt cryptography==45.0.4 PyYAML==6.0.2
+      - name: Download verified Vault test binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location https://releases.hashicorp.com/vault/2.2.0/vault_2.2.0_linux_amd64.zip --output "$RUNNER_TEMP/vault.zip"
+          printf '%s  %s\n' 05d78b0ac842ca7c522fc297df91527cd43c15420c4c5c0a969d48a7b0ff7b6d "$RUNNER_TEMP/vault.zip" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/vault-bin"
+          unzip -q "$RUNNER_TEMP/vault.zip" -d "$RUNNER_TEMP/vault-bin"
+          echo "VAULT_TEST_BINARY=$RUNNER_TEMP/vault-bin/vault" >> "$GITHUB_ENV"
+      - name: Real Vault TLS, KV, ACL, expiration, seal and delivery recovery
+        run: python -m unittest discover -s scripts/vault/tests -v
+      - name: Operations callback privacy and bounded output
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Validate automation
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook -i 'localhost,' site.yml --syntax-check
+          ansible-playbook -i 'localhost,' local-check.yml --syntax-check
+          ansible-lint site.yml local-check.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Validate Helm and rollout behavior
+        run: python scripts/vault/validate_chart.py
+      - name: Validate Bash syntax
+        run: |
+          bash -n scripts/vault/install-ssm-plugin.sh
+          bash -n scripts/vault/rebuild-lab.sh

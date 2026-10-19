@@ -1,0 +1,33 @@
+{{ define "admin_vault" }}
+{{ template "admin_head" . }}
+<div class="admin-shell">{{ template "admin_sidebar" . }}<div class="admin-main">{{ template "admin_topbar" . }}
+<main class="admin-content ops-page" data-ops-page="vault" data-endpoint="{{ .baseUrl }}/admin/operaciones/vault.json">
+    <div class="page-head"><div><p class="ops-eyebrow">SEGURIDAD · FASE 3</p><h1>Operación de Vault</h1><p class="page-sub">La salud de tu bóveda, en un solo lugar.</p></div>
+    <div class="page-actions"><button type="button" class="btn-light" data-ops-refresh><span class="material-symbols-outlined" aria-hidden="true">refresh</span> Actualizar</button>{{ if .vault_ui_url }}<a class="btn-dark" href="{{ .vault_ui_url }}" target="_blank" rel="noopener noreferrer">Abrir Vault UI <span aria-hidden="true">↗</span></a>{{ end }}</div></div>
+    <div class="ops-update" role="status" data-ops-update>Actualización automática cada 5 segundos</div>
+    <section class="vault-overview">
+        <div class="vault-hero"><div class="vault-hero-top"><span class="ops-mark material-symbols-outlined" aria-hidden="true">shield_lock</span><span class="ops-environment">AWS Learner Lab</span></div>
+            <p class="ops-eyebrow">ESTADO DEL SERVIDOR</p><h2 data-vault-state>{{ if .ops.Snapshot }}{{ .ops.Snapshot.State }}{{ else }}Sin datos de Vault{{ end }}</h2>
+            <p data-vault-description>{{ if .ops.Snapshot }}Última lectura recibida del colector de operaciones.{{ else }}Todavía no se ha recibido una lectura del servidor.{{ end }}</p>
+            <div class="vault-hero-foot"><span class="ops-dot" data-vault-dot></span><span data-vault-source>EC2 independiente del clúster Kubernetes</span></div>
+        </div>
+        <div class="vault-stat-grid">
+            <article class="ops-stat"><span class="ops-stat-icon material-symbols-outlined" aria-hidden="true">verified_user</span><span class="ops-label">Inicialización</span><strong data-vault-initialized>Sin lectura</strong><span>Estado de la bóveda</span></article>
+            <article class="ops-stat"><span class="ops-stat-icon material-symbols-outlined" aria-hidden="true">lock</span><span class="ops-label">Sellado</span><strong data-vault-sealed>Sin lectura</strong><span>Disponibilidad de secretos</span></article>
+            <article class="ops-stat"><span class="ops-stat-icon material-symbols-outlined" aria-hidden="true">encrypted</span><span class="ops-label">Conexión TLS</span><strong data-vault-tls>Sin lectura</strong><span>Certificado verificado por el colector</span></article>
+            <article class="ops-stat"><span class="ops-stat-icon material-symbols-outlined" aria-hidden="true">deployed_code</span><span class="ops-label">Versión de Vault</span><strong data-vault-version>{{ if .ops.Snapshot }}{{ .ops.Snapshot.Version }}{{ else }}—{{ end }}</strong><span>Servidor consultado</span></article>
+        </div>
+    </section>
+    <section class="ops-two-column">
+        <article class="card ops-card"><div class="ops-card-title"><h2>Flujo de secretos</h2><span class="chip">Contrato de integración</span></div>
+            <ol class="ops-flow"><li><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><div><strong>GitHub Actions</strong><p>Autenticación con token CI de solo lectura.</p></div><span aria-hidden="true">↓</span></li>
+            <li><span class="material-symbols-outlined" aria-hidden="true">shield_lock</span><div><strong>Vault · KV v2</strong><p>Consulta protegida a través del túnel SSM y TLS.</p></div><span aria-hidden="true">↓</span></li>
+            <li><span class="material-symbols-outlined" aria-hidden="true">deployed_code</span><div><strong>Kubernetes</strong><p>Secret de integración, migración y renovación de consumidores.</p></div></li></ol>
+        </article>
+        <article class="card ops-card"><div class="ops-card-title"><h2>Configuración prevista</h2></div><dl class="ops-details">
+            <div><dt>Ruta KV</dt><dd><code>secret/boutique/lab/integration</code></dd></div><div><dt>Política CI</dt><dd><code>boutique-ci</code> · solo lectura</dd></div><div><dt>Token CI</dt><dd>Máximo 4 horas</dd></div><div><dt>Namespace</dt><dd><code>boutique-vault-lab</code></dd></div><div><dt>Última lectura</dt><dd data-vault-received>{{ if .ops.Snapshot }}<time datetime="{{ .ops.Snapshot.ReceivedAt }}">{{ .ops.Snapshot.ReceivedAt }}</time>{{ else }}No recibida{{ end }}</dd></div>
+        </dl><p class="ops-hint">La salud confirma conectividad y sellado. La configuración prevista se verifica durante el despliegue.</p></article>
+    </section>
+    <section class="ops-bottom-note"><span class="material-symbols-outlined" aria-hidden="true">terminal</span><div><strong>¿Cómo se configuró este servidor?</strong><p>Consulta tareas, duración y resultado de cada ejecución de Ansible.</p></div><a class="btn-light" href="{{ .baseUrl }}/admin/ansible">Ver ejecuciones →</a></section>
+</main></div></div></body></html>
+{{ end }}

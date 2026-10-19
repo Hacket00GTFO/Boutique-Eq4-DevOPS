@@ -44,6 +44,9 @@ spec:
         app: {{ .Values.frontend.name }}
       annotations:
         sidecar.istio.io/rewriteAppHTTPProbers: "true"
+        {{- if and .Values.postgresIntegration.enabled .Values.postgresIntegration.rolloutRevision }}
+        boutique.dev/secret-revision: {{ .Values.postgresIntegration.rolloutRevision | quote }}
+        {{- end }}
     spec:
       {{- if .Values.serviceAccounts.create }}
       serviceAccountName: {{ .Values.frontend.name }}
@@ -100,6 +103,8 @@ spec:
             value: {{ .Values.postgresIntegration.demoDataEnabled | quote }}
           - name: ADMIN_API_BASE_URL
             value: "http://{{ .Values.catalogService.name }}:80"
+          - name: VAULT_PUBLIC_UI_URL
+            value: {{ .Values.operations.vaultUIURL | quote }}
           - name: ADMIN_COOKIE_SECURE
             value: {{ .Values.postgresIntegration.cookieSecure | quote }}
           - name: ADMIN_API_TOKEN
