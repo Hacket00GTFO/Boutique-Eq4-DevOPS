@@ -61,6 +61,8 @@ def smoke(values):
     loader = ('import json,os,sys; p=json.load(sys.stdin); os.environ.update(p["env"]); '
               'exec(compile(p["script"],"vault-lab-smoke","exec"))')
     smoke_credentials = {k: values[k] for k in ('ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN')}
+    # Kubernetes exposes the frontend Service on 80; Compose exposes it on 8080.
+    smoke_credentials['STOREFRONT_TEST_URL'] = 'http://frontend:80'
     output = kubectl('exec', '-i', 'deployment/catalogservice', '--', 'python', '-c', loader,
                      payload=json.dumps({'env': smoke_credentials, 'script': script}), timeout=240)
     try:

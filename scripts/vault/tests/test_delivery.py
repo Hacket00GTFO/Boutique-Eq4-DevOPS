@@ -1,4 +1,5 @@
 """Fail-closed validation and transaction recovery without cloud credentials."""
+import ast
 import base64
 import contextlib
 import io
@@ -8,7 +9,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bootstrap import seed_values
@@ -203,8 +205,28 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(deploy, 'kubectl', return_value='{"passed": 30}') as kubectl:
             deploy.smoke(values)
         payload = json.loads(kubectl.call_args.kwargs['payload'])
-        self.assertEqual(set(payload['env']), {'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN'})
+        self.assertEqual(set(payload['env']), {'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN', 'STOREFRONT_TEST_URL'})
+        self.assertEqual(payload['env']['STOREFRONT_TEST_URL'], 'http://frontend:80')
         self.assertNotIn(values['POSTGRES_PASSWORD'], json.dumps(payload))
+
+    def test_functional_http_probe_uses_the_deployment_service_port(self):
+        # Exercise the actual suite's HTTP request function without running its mutations.
+        source = Path(deploy.__file__).resolve().parents[1] / 'test-storefront-integration.py'
+        request_function = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body
+                                if isinstance(node, ast.FunctionDef) and node.name == 'request')
+        client = Mock()
+        namespace = {'os': os, 'json': json, 'urllib': urllib, 'client': client, 'jar': []}
+        exec(compile(ast.Module(body=[request_function], type_ignores=[]), str(source), 'exec'), namespace)
+        for configured, expected in ((None, 'http://frontend:8080'), ('http://frontend:80', 'http://frontend:80')):
+            with self.subTest(configured=configured), patch.dict(os.environ):
+                os.environ.pop('STOREFRONT_TEST_URL', None)
+                if configured:
+                    os.environ['STOREFRONT_TEST_URL'] = configured
+                response = io.BytesIO(b'healthy')
+                response.code, response.url = 200, expected + '/_readyz'
+                client.open.return_value = response
+                namespace['request']('/_readyz')
+                self.assertEqual(client.open.call_args.args[0].full_url, expected + '/_readyz')
 
     def test_restore_drops_stale_identity_fields(self):
         previous = deploy.secret_manifest(seed_values())
