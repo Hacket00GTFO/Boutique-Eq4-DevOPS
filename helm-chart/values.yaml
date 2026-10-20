@@ -109,6 +109,7 @@ postgresIntegration:
     name: postgres
     image: postgres:17-alpine
     storage: 5Gi
+    storageClassName: ""
 
 checkoutService:
   create: true

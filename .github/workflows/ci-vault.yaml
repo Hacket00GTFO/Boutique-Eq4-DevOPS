@@ -41,7 +41,8 @@ jobs:
           ansible-galaxy collection install -r requirements.yml
           ansible-playbook -i 'localhost,' site.yml --syntax-check
           ansible-playbook -i 'localhost,' local-check.yml --syntax-check
-          ansible-lint site.yml local-check.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+          ansible-playbook -i 'localhost,' root-recovery.yml --syntax-check
+          ansible-lint site.yml local-check.yml root-recovery.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1

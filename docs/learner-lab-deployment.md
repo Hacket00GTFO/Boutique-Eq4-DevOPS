@@ -2,7 +2,7 @@
 
 Esta lista ordena el despliegue de EKS, ECR, Vault, Ansible y Helm del proyecto.
 La [guía de Vault](vault-lab.md) contiene los comandos de instalación, custodia,
-rotación y recuperación. Este entorno es un laboratorio de un solo nodo; no
+rotación y recuperación. Vault funciona en un solo nodo en este laboratorio; no
 ofrece alta disponibilidad ni un servicio de producción permanente.
 
 ## Estado y datos que faltan antes de ejecutar
@@ -10,8 +10,8 @@ ofrece alta disponibilidad ni un servicio de producción permanente.
 - [ ] Sesión Learner Lab activa y las tres credenciales temporales de la **misma**
   sesión disponibles en el controlador Linux/WSL y como secrets de GitHub:
   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
-- [x] El usuario indicó que `TF_STATE_BUCKET` ya está declarado como secret de
-  GitHub. Confirmar que el bucket existe y conocer su **nombre** para los
+- [ ] Declarar `TF_STATE_BUCKET` como secret de GitHub. Confirmar que el bucket
+  existe y conocer su **nombre** para los
   comandos manuales de Terraform; el secret de Actions no llega por sí solo a
   la terminal local. No registrar aquí su valor.
 - [ ] Confirmar en la cuenta del Lab si ya existen el clúster
@@ -40,6 +40,10 @@ lugar del despliegue Helm normal; con Vault aún sin instalar, el CD fallaría.
    bucket de estado, pero con su propia clave S3; revisar `plan` antes de
    aplicar. La carpeta raíz `terraform/` es heredada de GCP y no forma parte
    de esta ruta AWS.
+   En Learner Lab, confirmar que existen los roles distintos
+   `LabEksClusterRole` y `LabEksNodeRole` (sus nombres completos incluyen
+   prefijos y sufijos variables). El stack descubre cada uno por nombre; si
+   falta alguno o aparecen varios candidatos, detenerse antes de `apply`.
 3. Si EKS/ECR no existen, aplicar `terraform/aws/k8s` desde el controlador:
 
    ```bash
@@ -50,10 +54,24 @@ lugar del despliegue Helm normal; con Vault aún sin instalar, el CD fallaría.
    ```
 
 4. Comprobar que el clúster y sus nodos están operativos, que los repositorios
-   ECR existen y que el addon `aws-ebs-csi-driver` está `ACTIVE`. PostgreSQL
-   también requiere una StorageClass predeterminada funcional. Crear el
-   namespace `boutique-vault-lab` si falta. La [guía de Vault](vault-lab.md#1-preparar-el-laboratorio)
-   muestra las comprobaciones de CSI y namespace.
+   ECR existen y que el grupo `boutique-eq4-eks-storage` está `ACTIVE`.
+   Ese grupo usa `LabRole` en un nodo separado y con taint: el Lab no permite
+   crear roles IAM, adjuntar la política EBS al rol de los nodos normales ni
+   adaptar la confianza de `LabRole` para EKS Pod Identity. `LabRole` tiene
+   permisos amplios; por ello solo el controlador EBS CSI debe ejecutarse en
+   ese nodo. Consultar el esquema de configuración del addon antes de fijar
+   allí el controlador mediante `nodeSelector` y `tolerations`. Los nodos de
+   la aplicación conservan `LabEksNodeRole`. Esta es una adaptación del Lab;
+   el taint evita colocaciones accidentales, pero no es un límite de seguridad.
+   Fuera del Lab se debe usar un rol de Pod Identity limitado al CSI.
+5. Instalar el addon `aws-ebs-csi-driver`, comprobar que está `ACTIVE` y probar
+   un PVC real antes de Helm. PostgreSQL requiere una StorageClass funcional;
+   el modo Vault selecciona explícitamente `boutique-ebs-gp3` con provisioner
+   `ebs.csi.aws.com` y `WaitForFirstConsumer`, sin requerir una clase predeterminada.
+   La clase heredada `gp2` con provisioner `kubernetes.io/aws-ebs` no demuestra
+   que CSI funcione. Crear el namespace `boutique-vault-lab` si falta. La
+   [guía de Vault](vault-lab.md#1-preparar-el-laboratorio) muestra las
+   comprobaciones de CSI y namespace.
 
 **Puerta:** EKS responde, ECR está listo, CSI y StorageClass funcionan. El
 workflow de GitHub no crea automáticamente el stack `terraform/aws/k8s`.
@@ -111,6 +129,28 @@ restringirlo a `main` y usar sus secciones **Environment secrets** y
 No configurar las nueve credenciales de aplicación como GitHub secrets: viven
 en Vault y el CD las entrega al Secret de Kubernetes durante el despliegue.
 
+Si GitHub CLI ya tiene acceso de administrador al repositorio, se puede completar
+esta fase desde la misma terminal WSL que tiene exportadas las tres credenciales
+AWS. El operador privado, el túnel SSM y el certificado deben estar disponibles:
+
+```bash
+python3 scripts/vault/configure_actions.py \
+  --repo OWNER/REPOSITORY \
+  --instance-id INSTANCE-ID \
+  --expected-account AWS-ACCOUNT-ID \
+  --ci-output "$HOME/vault-custody/ci-$(date -u +%Y%m%d-%H%M%S).json"
+```
+
+El helper comprueba la cuenta AWS y Vault, emite un token CI de lectura con
+vigencia máxima de cuatro horas y transfiere los valores mediante la entrada
+estándar de `gh`, sin imprimirlos ni incluirlos en argumentos. Sincroniza las
+tres credenciales AWS tanto en el repositorio como en `vault-lab`, configura
+instancia y certificado, restringe el environment a `main` y activa la variable
+de repositorio al final. Si hay reglas de revisión, espera o ramas adicionales,
+se detiene para conservarlas. Un fallo puede dejar valores parcialmente
+actualizados; resolverlo y repetir con un archivo de custodia nuevo antes del
+build. Repetir la transferencia cuando cambie la sesión AWS o expire el token CI.
+
 ### 5. Merge, imágenes y Helm
 
 1. Resolver el check heredado de GKE si la protección de `main` lo exige, y
@@ -152,6 +192,6 @@ acreditan por sí solas un despliegue AWS.
   documenta la recuperación y el rollback.
 - Sesión del Lab o token CI caducados: renovar ambos antes de reejecutar el CD.
 
-**Estado al preparar esta guía:** aquí no había credenciales AWS cargadas,
-identificadores reales de red ni `terraform.tfvars` de Vault. No se creó
-infraestructura ni se verificó el estado remoto de GitHub Secrets o EKS.
+Esta lista se comprueba para cada cuenta y sesión del laboratorio. Registrar las
+salidas reales de Terraform, Ansible, almacenamiento, ECR y CD en la matriz de
+evidencias; una validación local del código no acredita el despliegue remoto.

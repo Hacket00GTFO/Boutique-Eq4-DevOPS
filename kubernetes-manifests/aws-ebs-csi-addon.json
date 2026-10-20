@@ -1,0 +1,24 @@
+{
+  "controller": {
+    "nodeSelector": {
+      "boutique.dev/node-purpose": "storage-controller"
+    },
+    "tolerations": [
+      {
+        "key": "CriticalAddonsOnly",
+        "operator": "Exists"
+      },
+      {
+        "operator": "Exists",
+        "effect": "NoExecute",
+        "tolerationSeconds": 300
+      },
+      {
+        "key": "boutique.dev/storage-controller",
+        "operator": "Equal",
+        "value": "true",
+        "effect": "NoSchedule"
+      }
+    ]
+  }
+}

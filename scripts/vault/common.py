@@ -91,9 +91,12 @@ class Vault:
                 raw = response.read()
                 return response.status, json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
-            if exc.code in allowed:
-                return exc.code, {}
-            raise SafeError(f'Vault request failed (HTTP {exc.code}); no response body was logged.') from None
+            try:
+                if exc.code in allowed:
+                    return exc.code, {}
+                raise SafeError(f'Vault request failed (HTTP {exc.code}); no response body was logged.') from None
+            finally:
+                exc.close()
         except (urllib.error.URLError, TimeoutError, OSError):
             raise SafeError('Vault is unreachable or TLS verification failed.') from None
 
