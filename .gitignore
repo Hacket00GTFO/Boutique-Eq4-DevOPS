@@ -17,6 +17,7 @@
 *.swp
 *.tfstate*
 *.tfvars
+*.tfvars.json
 tfplan
 *~
 bin/
