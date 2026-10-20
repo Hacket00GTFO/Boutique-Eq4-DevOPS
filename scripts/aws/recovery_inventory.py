@@ -12,8 +12,20 @@ def query(*args):
                             capture_output=True, text=True, timeout=90, check=False)
     if result.returncode:
         error = re.search(r'An error occurred \(([A-Za-z0-9_.-]+)\)', result.stderr)
-        return {'unavailable': True, 'error_code': error.group(1) if error else 'request_failed'}
+        failure = {'unavailable': True, 'error_code': error.group(1) if error else 'request_failed'}
+        if 'voc-cancel-cred' in result.stderr:
+            failure['session_cancelled'] = True
+        return failure
     return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def finish(report):
+    print(json.dumps(report, indent=2))
+    eks = report.get('eks', {})
+    if isinstance(eks, dict) and eks.get('unavailable'):
+        if eks.get('session_cancelled'):
+            sys.exit('Recovery inventory blocked: start the Learner Lab and update all three AWS repository secrets.')
+        sys.exit('Recovery inventory incomplete: EKS access was denied or unavailable. Check the active Lab session and permissions.')
 
 
 def main():
@@ -76,7 +88,7 @@ def main():
         role_result = query('iam', 'get-role', '--role-name', role_name)
         if role_result.get('unavailable'):
             report['kms_permissions_advisory'] = role_result
-            print(json.dumps(report, indent=2))
+            finish(report)
             return
         role = role_result['Role']['Arn']
         permissions = query('iam', 'simulate-principal-policy', '--policy-source-arn', role,
@@ -87,7 +99,7 @@ def main():
             for item in permissions.get('EvaluationResults', [])] if not permissions.get('unavailable') else permissions
     except (KeyError, IndexError):
         report['kms_permissions_advisory'] = {'unavailable': True}
-    print(json.dumps(report, indent=2))
+    finish(report)
 
 
 if __name__ == '__main__':

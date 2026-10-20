@@ -106,5 +106,29 @@ class ConfigureActionsTests(unittest.TestCase):
         self.assertEqual([c.args[2] for c in api.call_args_list if len(c.args) > 2], ['PUT'])
 
 
+class RotationSessionTests(unittest.TestCase):
+    def test_refresh_does_not_require_a_cluster_before_reconstruction(self):
+        credentials = {name: 'private-placeholder-value' for name in actions.AWS_KEYS}
+        arguments = ['configure_actions.py', '--repo', 'owner/repo', '--expected-account', '716142453772', '--rotate-aws-only']
+        with (patch('sys.argv', arguments), patch.dict('os.environ', credentials),
+              patch.object(actions, 'command', side_effect=['{"Account":"716142453772"}', '{"clusters":[]}']) as command,
+              patch.object(actions, 'api', return_value={'permissions': {'admin': True}}),
+              patch.object(actions, 'rotate_credentials') as rotate,
+              patch('builtins.print')):
+            actions.main()
+        self.assertEqual(command.call_args_list[-1].args[0][1:3], ['eks', 'list-clusters'])
+        rotate.assert_called_once_with('owner/repo', credentials)
+
+    def test_canceled_service_access_stops_before_uploading_secrets(self):
+        credentials = {name: 'private-placeholder-value' for name in actions.AWS_KEYS}
+        arguments = ['configure_actions.py', '--repo', 'owner/repo', '--expected-account', '716142453772', '--rotate-aws-only']
+        with (patch('sys.argv', arguments), patch.dict('os.environ', credentials),
+              patch.object(actions, 'command', side_effect=['{"Account":"716142453772"}', SafeError('Lab canceled')]),
+              patch.object(actions, 'rotate_credentials') as rotate,
+              self.assertRaises(SafeError)):
+            actions.main()
+        rotate.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
