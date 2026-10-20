@@ -1,0 +1,63 @@
+- name: Install the dedicated KMS seal and restart for the one-time migration
+  hosts: vault
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require one explicitly selected Vault instance and key
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - vault_migration_instance is match('^i-[0-9a-f]{8,17}$')
+          - inventory_hostname == vault_migration_instance
+          - vault_kms_key_arn is match('^arn:aws:kms:us-east-1:[0-9]{12}:key/[0-9a-f-]{36}$')
+          - ansible_aws_ssm_bucket_name | length > 0
+
+    - name: Build the non-secret native seal configuration
+      ansible.builtin.set_fact:
+        vault_kms_configuration: |
+          seal "awskms" {
+            region = "us-east-1"
+            kms_key_id = "{{ vault_kms_key_arn }}"
+          }
+
+    - name: Inspect any existing seal configuration
+      ansible.builtin.stat:
+        path: /etc/vault.d/seal.hcl
+      register: vault_seal_file
+
+    - name: Read existing configuration without logging it
+      ansible.builtin.slurp:
+        src: /etc/vault.d/seal.hcl
+      register: vault_existing_seal
+      when: vault_seal_file.stat.exists
+      no_log: true
+
+    - name: Preserve independently configured KMS keys
+      ansible.builtin.assert:
+        that:
+          - (vault_existing_seal.content | b64decode | trim) == (vault_kms_configuration | trim)
+        fail_msg: A different seal configuration exists; do not replace a live encryption key.
+      when: vault_seal_file.stat.exists
+      no_log: true
+
+    - name: Install persistent native KMS configuration
+      ansible.builtin.copy:
+        content: "{{ vault_kms_configuration }}"
+        dest: /etc/vault.d/seal.hcl
+        owner: vault
+        group: vault
+        mode: '0600'
+
+    - name: Load all Vault configuration fragments
+      ansible.builtin.template:
+        src: roles/vault_service/templates/vault.service.j2
+        dest: /etc/systemd/system/vault.service
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart the existing service without changing Raft data
+      ansible.builtin.systemd_service:
+        name: vault
+        daemon_reload: true
+        state: restarted

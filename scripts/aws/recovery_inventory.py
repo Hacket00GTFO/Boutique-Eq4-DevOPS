@@ -37,8 +37,9 @@ def main():
     report['ebs_snapshots'] = [{key: item.get(key) for key in
                                 ('SnapshotId', 'VolumeId', 'State', 'StartTime', 'VolumeSize', 'Encrypted', 'KmsKeyId', 'Tags')}
                                for item in snapshots.get('Snapshots', [])] if not snapshots.get('unavailable') else snapshots
-    recycling = query('rbin', 'list-resources', '--resource-type', 'EBS_SNAPSHOT')
-    report['recycle_bin_snapshots'] = recycling.get('Resources', recycling)
+    recycling = query('ec2', 'list-snapshots-in-recycle-bin')
+    report['recycle_bin_snapshots'] = recycling
+    report['recycle_bin_volumes'] = query('ec2', 'list-volumes-in-recycle-bin')
     vaults = query('backup', 'list-backup-vaults')
     report['aws_backup'] = vaults if vaults.get('unavailable') else []
     for vault in vaults.get('BackupVaultList', []):
@@ -48,6 +49,12 @@ def main():
             for item in points.get('RecoveryPoints', [])] if not points.get('unavailable') else points})
     keys = query('kms', 'list-keys')
     report['kms_keys'] = keys.get('Keys', keys)
+    report['kms_key_metadata'] = []
+    for key in keys.get('Keys', []):
+        metadata = query('kms', 'describe-key', '--key-id', key['KeyId'])
+        report['kms_key_metadata'].append({field: metadata.get('KeyMetadata', {}).get(field)
+                                           for field in ('Arn', 'KeyManager', 'KeyState', 'KeyUsage')}
+                                          if not metadata.get('unavailable') else metadata)
     buckets = query('s3api', 'list-buckets')
     report['s3_buckets'] = [item['Name'] for item in buckets.get('Buckets', [])] if not buckets.get('unavailable') else buckets
     try:
