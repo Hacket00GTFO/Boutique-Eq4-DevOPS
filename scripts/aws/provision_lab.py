@@ -17,7 +17,8 @@ def command(args, timeout=1800):
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False)
     if result.returncode:
         # No application settings are supplied to Terraform, but still keep error output bounded.
-        errors = [line.strip() for line in result.stderr.splitlines()
+        combined = __import__('re').sub(r'\x1b\[[0-9;]*m', '', result.stdout + '\n' + result.stderr)
+        errors = [line.strip() for line in combined.splitlines()
                   if 'Error:' in line or 'AccessDenied' in line or 'Unauthorized' in line]
         print('\n'.join(errors[:8]), flush=True)
         raise PreparationError('Infrastructure command failed; state and existing resources were retained.')
