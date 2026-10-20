@@ -7,6 +7,7 @@ import secrets
 import sys
 from urllib.parse import quote
 from common import DATA_PATH, SafeError, Vault, private_json, validate_values
+from local_env import integration_values
 
 POLICIES = Path(__file__).resolve().parents[2] / 'infrastructure/vault/policies'
 
@@ -33,6 +34,7 @@ def main():
     sub.add_parser('configure', help='Enable KV v2, hashed audit logging and access policies')
     seed = sub.add_parser('seed', help='Seed new lab data without overwriting existing database credentials')
     seed.add_argument('--rotate-api-tokens', action='store_true')
+    seed.add_argument('--env-file', help='Import the local application/admin settings into a NEW Vault secret')
     issue = sub.add_parser('issue-ci', help='Create an orphan, non-renewable, read-only four-hour token')
     issue.add_argument('--output', required=True)
     operator = sub.add_parser('issue-operator')
@@ -82,6 +84,9 @@ def main():
         })
         print('KV v2, audit and policies configured; no application values were printed.')
     elif args.command == 'seed':
+        if args.env_file and args.rotate_api_tokens:
+            raise SafeError('Local environment import cannot rotate an existing secret.')
+        imported = integration_values(args.env_file) if args.env_file else None
         code, result = vault.request('GET', DATA_PATH, allowed=(200, 404))
         if code == 200:
             values = validate_values(result['data']['data'])
@@ -92,7 +97,7 @@ def main():
         else:
             if args.rotate_api_tokens:
                 raise SafeError('Cannot rotate a missing integration secret.')
-            values, version = seed_values(), 0
+            values, version = imported or seed_values(), 0
         vault.request('POST', DATA_PATH, {'options': {'cas': version}, 'data': values})
         print('Integration secret saved using check-and-set; database credentials were preserved on rotation.')
     elif args.command in ('issue-ci', 'issue-operator'):

@@ -4,7 +4,17 @@ name: "CI: Docker build & push a ECR"
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Development: read-only inventory or prepare the persistent Vault KMS key'
+        type: choice
+        options: [inventory, prepare-vault-kms]
+        default: inventory
+      existing_kms_key_arn:
+        description: 'Resume KMS preparation with an already-created key; never recreate it'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -16,7 +26,7 @@ concurrency:
 
 jobs:
   recovery-inventory:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation != 'prepare-vault-kms'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -31,6 +41,29 @@ jobs:
           aws-region: us-east-1
       - name: Inspect retained backups and KMS permissions without changing resources
         run: python3 scripts/aws/recovery_inventory.py
+  prepare-vault-kms:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'prepare-vault-kms'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Prepare the persistent Vault KMS key before creating EKS
+        env:
+          EXISTING_KMS_KEY_ARN: ${{ inputs.existing_kms_key_arn }}
+        run: |
+          args=()
+          if [[ -n "$EXISTING_KMS_KEY_ARN" ]]; then
+            args+=(--existing-key-arn "$EXISTING_KMS_KEY_ARN")
+          fi
+          python3 scripts/aws/prepare_vault_kms.py "${args[@]}"
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
