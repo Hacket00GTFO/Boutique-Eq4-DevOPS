@@ -1,12 +1,16 @@
 name: Vault security and delivery checks
 on:
   pull_request:
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   push:
     branches: [main]
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   workflow_dispatch: {}
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -15,6 +19,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -33,6 +39,8 @@ jobs:
           echo "VAULT_TEST_BINARY=$RUNNER_TEMP/vault-bin/vault" >> "$GITHUB_ENV"
       - name: Real Vault TLS, KV, ACL, expiration, seal and delivery recovery
         run: python -m unittest discover -s scripts/vault/tests -v
+      - name: Direct AWS account boundary, node recovery and existing application custody
+        run: python -m unittest discover -s scripts/aws/tests -v
       - name: Operations callback privacy and bounded output
         run: python -m unittest discover -s scripts/tests -v
       - name: Validate automation

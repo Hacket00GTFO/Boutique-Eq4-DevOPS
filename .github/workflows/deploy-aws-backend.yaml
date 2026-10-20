@@ -34,12 +34,18 @@ jobs:
           terraform_version: "1.16.1"
 
       - name: Configurar credenciales de AWS (Learner Lab)
+        id: aws
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+
+      - name: Require the target AWS account
+        env:
+          AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
+        run: test "$AWS_ACCOUNT" = 716142453772
 
       - name: Terraform Init
         run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"

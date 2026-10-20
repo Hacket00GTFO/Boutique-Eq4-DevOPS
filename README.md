@@ -29,7 +29,11 @@ incidencias y entrega, con historial persistente. [Guía de uso del demo](docs/d
 
 La Fase 3 incorpora **Vault en EC2 independiente, Ansible por SSM y entrega de
 secretos desde GitHub Actions a EKS**. El modo `vault-lab` usa un namespace y
-PostgreSQL propios y se activa con `ENABLE_VAULT_LAB=true` después del bootstrap.
+PostgreSQL propios. La ruta principal conecta directamente GitHub con AWS:
+un merge de `development` a `main` prueba, construye las doce imágenes ECR y
+despliega en EKS/Helm. Cada sesión requiere renovar las tres credenciales AWS
+del repositorio para la cuenta `716142453772`; las credenciales de aplicación
+se conservan en Kubernetes. Ver [despliegue directo y renovación](docs/aws-automatic-deployment.md).
 Ver [instalación, custodia, pruebas y recuperación](docs/vault-lab.md) y la
 [matriz de evidencias](docs/vault-evidence.md). La implementación versionada no
 acredita por sí sola un despliegue AWS: las verificaciones remotas se registran

@@ -6,6 +6,11 @@ La ruta de secretos es `secret/boutique/lab/integration` (KV v2). El entorno
 requiere una sesión activa del laboratorio: las credenciales AWS y el token CI
 expiran. El diseño es de un solo nodo y no ofrece alta disponibilidad.
 
+La ruta principal actual usa [conexión directa a AWS](aws-automatic-deployment.md)
+y el Secret de aplicación existente en Kubernetes. Esta guía conserva la
+operación manual de Vault y Ansible; los tokens de esta ceremonia no se requieren
+para cada merge ni para renovar la sesión AWS del CD directo.
+
 ## Arquitectura y contratos
 
 ```mermaid
@@ -13,17 +18,16 @@ flowchart LR
     A[Operador Linux/WSL] -->|Ansible por SSM| V[EC2 Vault / systemd / Raft]
     A -->|HTTPS 8200 / CIDR restringido| U[Vault UI]
     U --> V
-    G[Commit main] --> T[Pruebas PostgreSQL y Vault]
+    G[Merge development a main] --> T[Pruebas PostgreSQL y entrega]
     T --> E[Imágenes ECR / SHA]
     E --> C[GitHub Actions]
-    C -->|SSM / túnel localhost:18200| V
-    V -->|TLS / token CI / lectura KV| C
     C --> S[Secret boutique-integration]
     S --> K[Helm / migración / cuatro consumidores]
     K --> P[PostgreSQL privado / PVC]
 ```
 
-El Security Group de Vault solo admite entrada TCP 8200 desde redes
+El operador consulta Vault por SSM/TLS; el CD directo conserva el Secret ya
+instalado en Kubernetes. El Security Group de Vault solo admite entrada TCP 8200 desde redes
 administrativas de /24 o más específicas. No admite SSH. Ansible y CI usan
 SSM con salida HTTPS; no necesitan abrir 8200 para los rangos de GitHub.
 El túnel conserva verificación TLS mediante el SAN `localhost`. La UI directa
@@ -202,35 +206,18 @@ anterior por su accessor usando la sesión de operador.
 
 ## 4. Activar GitHub Actions
 
-Crear el environment `vault-lab` en GitHub y limitarlo a `main`. Configurar:
+Seguir la [guía de conexión directa](aws-automatic-deployment.md). Configurar
+únicamente `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `AWS_SESSION_TOKEN`
+como **repository secrets**, de la misma sesión activa de la cuenta
+`716142453772`. El CD no usa el environment ni las variables/tokens heredados
+de Vault; no se requiere el helper antiguo de activación.
 
-| Ubicación | Nombre | Valor |
-| --- | --- | --- |
-| Variable de repositorio | `ENABLE_VAULT_LAB` | `true` |
-| Variables del environment | `VAULT_INSTANCE_ID` | ID de la EC2 dedicada |
-| Variables del environment | `VAULT_CA_CERT_B64` | Certificado público en base64 |
-| Secret del environment | `VAULT_CI_TOKEN` | Token CI de cuatro horas |
-| Secrets heredados o del environment | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Sesión activa del Learner Lab |
-
-Con GitHub CLI autenticado, transferir el token mediante stdin:
-
-```bash
-python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/"vault-custody/ci.json").read_text())["client_token"])' \
-  | gh secret set VAULT_CI_TOKEN --env vault-lab
-base64 -w0 "$VAULT_CACERT" | gh variable set VAULT_CA_CERT_B64 --env vault-lab
-gh variable set VAULT_INSTANCE_ID --env vault-lab --body INSTANCE-ID
-gh variable set ENABLE_VAULT_LAB --body true
-```
-
-El interruptor es de **repositorio**, porque decide qué job ejecutar antes de
-cargar el environment. En `false`/ausente se conserva el CD anterior; en `true`
-solo se despliega la release de laboratorio. No ejecutar ambos contra la misma
-release. Ninguna credencial de aplicación se configura como secret de GitHub.
-
-Un push relevante a `main` ejecuta PostgreSQL + pruebas Vault, construye ECR y
-dispara CD. El deploy manual acepta un SHA completo, ancestro de `main`, cuyas
-imágenes deben existir. El job verifica CSI, abre SSM, valida TLS, lee KV con
-`vault-action` y despliega con `--atomic --wait --wait-for-jobs`.
+Un merge de `development` a `main` del mismo repositorio comprueba la cuenta,
+ejecuta PostgreSQL y pruebas de entrega, construye las doce imágenes ECR y llama
+al CD con el mismo SHA. El deploy manual acepta un SHA completo, ancestro de
+`main`, cuyas imágenes deben existir. El job reanuda los nodos EKS existentes,
+verifica CSI e imágenes y conserva las nueve claves del Secret original de
+Kubernetes para desplegar con `--atomic --wait --wait-for-jobs`.
 Las nuevas pruebas Vault son obligatorias antes del build ECR.
 
 La verificación funcional reutiliza la suite HTTP/gRPC/PostgreSQL existente

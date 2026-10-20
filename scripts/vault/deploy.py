@@ -117,7 +117,7 @@ def deploy(values, registry, image_tag, revision):
                 payload=json.dumps(secret_manifest(values)))
         run(helm_args, timeout=1300)  # Atomic upgrade + rollback can each need ten minutes.
         smoke(values)
-        print('PASS Vault lab deployment and migration completed.')
+        print('PASS application deployment and migration completed.')
     except BaseException:
         if changed:
             try:

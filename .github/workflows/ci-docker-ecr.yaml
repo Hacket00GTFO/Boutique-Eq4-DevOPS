@@ -1,31 +1,89 @@
 name: "CI: Docker build & push a ECR"
 
-# Construye la imagen Docker de cada microservicio y la sube a su
-# repositorio en Amazon ECR (creados por terraform/aws/k8s). Corre en cada
-# push a main que toque codigo fuente de algun servicio.
-#
-# Requiere los mismos secrets AWS_* que el resto de los workflows de AWS
-# (ver terraform/aws/README.md), refrescados cada sesion del Learner Lab.
+# Every merged development -> main PR deploys, including documentation-only PRs.
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "helm-chart/**"
-      - "scripts/vault/**"
-      - ".github/workflows/cd-helm-eks.yaml"
-      - ".github/workflows/ci-docker-ecr.yaml"
+    types: [closed]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+concurrency:
+  group: boutique-aws-release-main
+  cancel-in-progress: false
+
 jobs:
+  connection:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')) ||
+      (github.ref == 'refs/heads/main' && github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref == 'development' &&
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
+      - name: Connect directly to the target AWS account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Verify account, active Lab access and existing EKS/ECR
+        run: python3 scripts/aws/direct_release.py preflight
+  release:
+    needs: connection
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        github.event.pull_request.head.ref == 'development' &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    outputs:
+      image_tag: ${{ steps.release.outputs.image_tag }}
+    steps:
+      - name: Resolve immutable merged release
+        id: release
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "image_tag=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.image_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a release already present in main
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.image_tag }}
+        run: git merge-base --is-ancestor "$RELEASE_SHA" origin/main
   integration:
+    needs: release
     uses: ./.github/workflows/ci-postgres-integration.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
   vault-security:
+    needs: release
     uses: ./.github/workflows/ci-vault.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
   build-and-push:
-    needs: [integration, vault-security]
+    needs: [release, integration, vault-security]
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         service:
           - { name: adservice, context: src/adservice }
@@ -42,14 +100,23 @@ jobs:
           - { name: shippingservice, context: src/shippingservice }
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.image_tag }}
+          persist-credentials: false
 
       - name: Configurar credenciales de AWS (Learner Lab)
+        id: aws
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+
+      - name: Require the target AWS account
+        env:
+          AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
+        run: test "$AWS_ACCOUNT" = 716142453772
 
       - name: Login a ECR
         id: ecr-login
@@ -59,7 +126,22 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           REPO: boutique-eq4/${{ matrix.service.name }}
+          BUILD_CONTEXT: ${{ matrix.service.context }}
+          IMAGE_TAG: ${{ needs.release.outputs.image_tag }}
         run: |
-          docker build -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" ${{ matrix.service.context }}
-          docker push "$REGISTRY/$REPO:${{ github.sha }}"
+          set -euo pipefail
+          docker build -t "$REGISTRY/$REPO:$IMAGE_TAG" -t "$REGISTRY/$REPO:latest" "$BUILD_CONTEXT"
+          docker push "$REGISTRY/$REPO:$IMAGE_TAG"
           docker push "$REGISTRY/$REPO:latest"
+
+  deploy:
+    needs: [release, build-and-push]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cd-helm-eks.yaml
+    with:
+      image_tag: ${{ needs.release.outputs.image_tag }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}

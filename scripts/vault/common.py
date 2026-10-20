@@ -22,7 +22,7 @@ class SafeError(Exception):
 def validate_values(values):
     if not isinstance(values, dict) or any(not isinstance(values.get(k), str) or
                                          not values[k].strip() for k in KEYS):
-        raise SafeError('Vault secret is incomplete: all nine integration keys are required.')
+        raise SafeError('Integration secret is incomplete: all nine integration keys are required.')
     if any('\n' in values[k] or '\r' in values[k] or '\0' in values[k] for k in KEYS):
         raise SafeError('Integration values must be single-line strings.')
     if len(values['ADMIN_PASSWORD']) < 12 or any(len(values[k]) < 24 for k in
