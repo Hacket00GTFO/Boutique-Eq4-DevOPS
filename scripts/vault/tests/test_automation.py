@@ -62,6 +62,16 @@ class AutomationTests(unittest.TestCase):
         self.assertIn('Lab is inactive', str(failure.exception))
         self.assertNotIn('isolated-secret-fixture', str(failure.exception))
 
+    def test_missing_resources_are_not_misdiagnosed_as_expired_credentials(self):
+        for service, code in (('eks', 'ResourceNotFoundException'),
+                              ('ec2', 'InvalidInstanceID.NotFound')):
+            result = subprocess.CompletedProcess([], 1, '', code + ' isolated-secret-fixture')
+            with self.subTest(service=service), patch.object(resume_lab.subprocess, 'run', return_value=result):
+                with self.assertRaisesRegex(SafeError, 'missing') as failure:
+                    resume_lab.aws(service, 'describe')
+                self.assertNotIn('isolated-secret-fixture', str(failure.exception))
+                self.assertNotIn('expired', str(failure.exception))
+
     def test_github_trust_binds_numeric_ownership_main_environment_and_workflow(self):
         role = role_configuration('owner/repo', 123, 456)
         self.assertEqual(role['bound_subject'], 'repo:owner/repo:environment:vault-lab')

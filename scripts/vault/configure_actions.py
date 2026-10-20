@@ -20,6 +20,8 @@ def command(args, value=None):
         # CLI errors can contain request details. Never forward stdout/stderr or stdin.
         if args[0] == 'aws' and 'voc-cancel-cred' in result.stderr:
             raise SafeError('Start the Learner Lab and load its three new credentials before updating GitHub.')
+        if args[:3] == ['aws', 'eks', 'describe-cluster'] and 'ResourceNotFoundException' in result.stderr:
+            raise SafeError('The expected EKS cluster is absent in us-east-1. Verify the AWS account and Terraform state; rotating credentials does not recreate infrastructure.')
         raise SafeError(f'{args[0]} failed; check authentication, permissions and connectivity.')
     return result.stdout
 

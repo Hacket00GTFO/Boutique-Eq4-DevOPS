@@ -17,6 +17,10 @@ def aws(*args, timeout=60):
             raise SafeError('Learner Lab is inactive; start the Lab and replace all three AWS credentials.')
         if 'ExpiredToken' in result.stderr:
             raise SafeError('AWS credentials expired; replace all three with values from the active Lab.')
+        if args[0] == 'eks' and 'ResourceNotFoundException' in result.stderr:
+            raise SafeError('An expected EKS resource is missing in us-east-1. Verify the AWS account and existing Terraform state before recreating infrastructure.')
+        if args[0] == 'ec2' and 'InvalidInstanceID.NotFound' in result.stderr:
+            raise SafeError('An expected EC2 instance is missing. Verify the AWS account and retained Vault data before recreating infrastructure.')
         raise SafeError('AWS preflight failed; verify active Lab credentials and required service permissions.')
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
