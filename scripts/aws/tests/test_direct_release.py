@@ -65,6 +65,15 @@ class DirectReleaseTests(unittest.TestCase):
                     release.aws('eks', 'describe-cluster')
                 self.assertNotIn('isolated-private-response', str(failure.exception))
 
+    def test_missing_infrastructure_identifies_service_without_private_response(self):
+        for service, code, expected in [('eks', 'ResourceNotFoundException', 'EKS cluster'),
+                                        ('ecr', 'RepositoryNotFoundException', 'ECR repositories')]:
+            result = subprocess.CompletedProcess([], 1, '', code + ' isolated-private-response')
+            with self.subTest(service=service), patch.object(release.subprocess, 'run', return_value=result):
+                with self.assertRaisesRegex(SafeError, expected) as failure:
+                    release.aws(service, 'describe')
+                self.assertNotIn('isolated-private-response', str(failure.exception))
+
     def test_resume_starts_only_stopped_members_of_the_existing_node_groups(self):
         lab = Lab()
         with contextlib.redirect_stdout(io.StringIO()):

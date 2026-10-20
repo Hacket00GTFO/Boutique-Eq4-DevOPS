@@ -29,7 +29,9 @@ def aws(*args, timeout=60):
         if 'voc-cancel-cred' in result.stderr or 'ExpiredToken' in result.stderr:
             raise SafeError('Start the Learner Lab and update all three repository AWS secrets from the same active session.')
         if 'ResourceNotFoundException' in result.stderr or 'RepositoryNotFoundException' in result.stderr:
-            raise SafeError('Required EKS/ECR infrastructure is missing in the target account; inspect its Terraform state before recreating resources.')
+            if args[0] == 'eks':
+                raise SafeError('The required EKS cluster boutique-eq4-eks is missing in account 716142453772 / us-east-1. AWS authentication passed; recover the existing infrastructure before deploying.')
+            raise SafeError('One or more required ECR repositories are missing in account 716142453772 / us-east-1. AWS authentication passed; recover the existing infrastructure before publishing.')
         raise SafeError('AWS request failed; check the active Lab session and service permissions. Private output suppressed.')
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
