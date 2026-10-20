@@ -23,6 +23,20 @@ def main():
     report = {'account': ACCOUNT, 'region': 'us-east-1'}
     clusters = query('eks', 'list-clusters')
     report['eks'] = clusters.get('clusters', clusters)
+    report['eks_details'] = []
+    for name in clusters.get('clusters', []):
+        result = query('eks', 'describe-cluster', '--name', name)
+        cluster = result.get('cluster', {})
+        detail = {field: cluster.get(field) for field in ('name', 'status', 'version', 'health')}
+        groups = query('eks', 'list-nodegroups', '--cluster-name', name)
+        detail['nodegroups'] = []
+        for group in groups.get('nodegroups', []):
+            result = query('eks', 'describe-nodegroup', '--cluster-name', name, '--nodegroup-name', group)
+            node = result.get('nodegroup', {})
+            detail['nodegroups'].append({field: node.get(field) for field in
+                                        ('nodegroupName', 'status', 'nodeRole', 'health', 'scalingConfig', 'resources')}
+                                       if not result.get('unavailable') else result)
+        report['eks_details'].append(detail)
     instances = query('ec2', 'describe-instances', '--filters', 'Name=tag:Name,Values=boutique-vault-lab')
     report['vault_instances'] = [{'id': item['InstanceId'], 'state': item['State']['Name'],
                                   'volumes': [mapping.get('Ebs', {}).get('VolumeId')
