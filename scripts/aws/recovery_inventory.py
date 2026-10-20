@@ -1,5 +1,6 @@
 """Read-only recovery inventory; never opens disks or prints credentials."""
 import json
+import base64
 import re
 import subprocess
 import sys
@@ -99,6 +100,28 @@ def main():
                 managed = query('ssm', 'describe-instance-information', '--filters', 'Key=InstanceIds,Values=' + ','.join(ids))
                 detail['nodegroups'][-1]['ssm'] = [{field: machine.get(field) for field in ('InstanceId', 'PingStatus', 'PlatformName')}
                                                   for machine in managed.get('InstanceInformationList', [])]
+                if group == 'boutique-eq4-eks-storage':
+                    machine = next((machine for reservation in machines.get('Reservations', [])
+                                    for machine in reservation['Instances']), None)
+                    if machine:
+                        image = query('ec2', 'describe-images', '--image-ids', machine['ImageId'])
+                        detail['nodegroups'][-1]['image'] = [{field: entry.get(field) for field in
+                            ('ImageId', 'Name', 'Description', 'OwnerId', 'Architecture', 'CreationDate')}
+                            for entry in image.get('Images', [])]
+                        userdata = query('ec2', 'describe-instance-attribute', '--instance-id', machine['InstanceId'], '--attribute', 'userData')
+                        text = base64.b64decode(userdata.get('UserData', {}).get('Value', '')).decode('utf-8', errors='replace')
+                        detail['nodegroups'][-1]['bootstrap'] = {
+                            'userdata_present': bool(text), 'node_config_present': 'application/node.eks.aws' in text,
+                            'cluster_name_present': name in text, 'current_endpoint_present': cluster.get('endpoint', '') in text}
+                        console = query('ec2', 'get-console-output', '--instance-id', machine['InstanceId'], '--latest')
+                        content = console.get('Output', '')
+                        try:
+                            content = base64.b64decode(content, validate=True).decode('utf-8', errors='replace')
+                        except ValueError:
+                            pass
+                        lines = [re.sub(r'[A-Za-z0-9+/=_-]{80,}|(?:AKIA|ASIA)[A-Z0-9]{16}', '[redacted]', line)[:300]
+                                 for line in content.splitlines() if re.search('nodeadm|kubelet|cloud-init|failed|error', line, re.I)]
+                        detail['nodegroups'][-1]['boot_diagnostics'] = lines[-35:] if not console.get('unavailable') else console
         detail['addons'] = []
         addons = query('eks', 'list-addons', '--cluster-name', name)
         for addon in addons.get('addons', []):
