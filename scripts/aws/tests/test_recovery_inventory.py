@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -7,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from recovery_inventory import finish, query
+from recovery_inventory import finish, query, kubernetes_inventory
 
 
 class RecoveryInventoryTests(unittest.TestCase):
@@ -25,3 +26,15 @@ class RecoveryInventoryTests(unittest.TestCase):
     def test_empty_accessible_cluster_list_is_a_valid_inventory(self):
         with contextlib.redirect_stdout(io.StringIO()):
             finish({'eks': []})
+
+    def test_kubernetes_probe_does_not_print_annotations_tokens_or_private_errors(self):
+        nodes = {'items': [{'metadata': {'name': 'node', 'annotations': {'private': 'private-marker'}},
+                            'status': {'conditions': [{'type': 'Ready', 'status': 'False', 'reason': 'KubeletNotReady'}]}}]}
+        responses = [subprocess.CompletedProcess([], 0, 'public context', ''),
+                     subprocess.CompletedProcess([], 0, json.dumps(nodes), ''),
+                     subprocess.CompletedProcess([], 1, '', 'Forbidden private-marker')]
+        with patch('recovery_inventory.subprocess.run', side_effect=responses):
+            result = kubernetes_inventory('boutique-eq4-eks')
+        self.assertEqual(result['nodes'][0]['ready'], 'False')
+        self.assertEqual(result['system_pods']['error_code'], 'KubernetesForbidden')
+        self.assertNotIn('private-marker', json.dumps(result))

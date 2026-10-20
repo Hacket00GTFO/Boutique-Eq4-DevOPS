@@ -1,11 +1,11 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_vault_kms import PreparationError
-from provision_lab import check_plan, vault_key_in_state
+from provision_lab import check_plan, vault_key_in_state, wait_for_nodes, wait_for_addon
 
 
 class InfrastructurePlanTests(unittest.TestCase):
@@ -44,3 +44,18 @@ class InfrastructurePlanTests(unittest.TestCase):
               patch('provision_lab.tf') as tf, self.assertRaises(PreparationError)):
             vault_key_in_state()
         tf.assert_not_called()
+
+    def test_node_registration_waits_for_application_and_storage_nodes(self):
+        app = {'metadata': {'labels': {}}, 'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+        storage = {'metadata': {'labels': {'boutique.dev/node-purpose': 'storage-controller'}}, 'status': app['status']}
+        read = Mock(side_effect=[{'items': []}, {'items': [app, app]}, {'items': [app, app, storage]}])
+        wait_for_nodes(read=read, sleep=lambda _: None, attempts=3)
+        with self.assertRaises(PreparationError):
+            wait_for_nodes(read=lambda: {'items': [app, app, app]}, sleep=lambda _: None, attempts=1)
+
+    def test_addon_must_be_active_but_can_recover_from_transient_degraded_state(self):
+        call = Mock(side_effect=[{'addon': {'status': 'DEGRADED'}}, {'addon': {'status': 'ACTIVE'}}])
+        wait_for_addon('boutique-eq4-eks', call=call, sleep=lambda _: None, attempts=2)
+        with self.assertRaises(PreparationError):
+            wait_for_addon('boutique-eq4-eks', call=lambda *args: {'addon': {'status': 'DEGRADED'}},
+                           sleep=lambda _: None, attempts=1)
