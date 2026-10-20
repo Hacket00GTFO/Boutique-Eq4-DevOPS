@@ -26,8 +26,10 @@ ofrece alta disponibilidad ni un servicio de producción permanente.
   y versiones de la [guía de Vault](vault-lab.md#1-preparar-el-laboratorio).
   Conservar secretos y archivos de custodia fuera de Git.
 
-**No activar todavía `ENABLE_VAULT_LAB`.** Ese valor elige el job de Vault en
-lugar del despliegue Helm normal; con Vault aún sin instalar, el CD fallaría.
+**No activar todavía `VAULT_AUTOMATION_READY`.** El CD exige haber completado
+la migración KMS y la confianza OIDC descritas en la
+[guía de automatización](aws-automatic-deployment.md). El Lab debe permitir
+esas operaciones antes de poder renovar únicamente las tres claves AWS.
 
 ## Secuencia con puertas de verificación
 
@@ -96,73 +98,76 @@ del perfil IAM del Lab, resolverlos antes de continuar.
 1. Instalar los requisitos y colecciones Ansible desde `ansible/` y ejecutar
    `site.yml` por SSM. Repetirlo y exigir `changed=0`, `failed=0` y
    `unreachable=0` con `scripts/vault/check_idempotence.py`.
-2. Abrir el túnel SSM, comprobar el certificado TLS y guardar su certificado
-   **público** para el environment. Hacer `init` con las claves PGP de los
+2. Abrir el túnel SSM y comprobar el certificado TLS **público** exportado por
+   Ansible. Hacer `init` con las claves PGP de los
    custodios, `unseal` con el quorum, `configure` y `seed` según
    [la ceremonia documentada](vault-lab.md#3-ceremonia-de-bootstrap-y-custodia).
-3. Emitir el token de operador y, al final, un token CI de lectura al KV exacto
-   de la aplicación. El token CI dura como máximo cuatro horas. El token raíz,
-   las participaciones de unseal y el token de operador quedan fuera de GitHub.
+3. Emitir el token de operador. El token raíz, las participaciones de unseal y
+   el token de operador quedan fuera de GitHub. Completar después la migración
+   de Shamir a KMS con snapshot, quorum y una prueba real de reinicio.
 
 **Puerta:** Vault responde por HTTPS con TLS verificado, está desprecintado y
-contiene las nueve claves esperadas. La configuración CI del repositorio **no**
-ejecuta `ansible-playbook site.yml` sobre la EC2: esta fase es manual.
+contiene las nueve claves esperadas. El primer bootstrap y la migración son
+operaciones controladas. Después el CD ejecuta `site.yml` por SSM en cada
+despliegue, limitado al ID de Vault configurado, sin inicializar ni reemplazar Raft.
 
 ### 4. Secrets y variables de GitHub
 
 En el repositorio GitHub, abrir **Settings → Secrets and variables → Actions**.
 En **Secrets**, usar **New repository secret** para las credenciales AWS y el
-bucket de estado; en **Variables**, usar **New repository variable** para el
-interruptor, pero dejarlo sin activar hasta superar las puertas anteriores.
+bucket de estado. Conservar las credenciales AWS únicamente en el repositorio.
 Luego abrir **Settings → Environments → vault-lab** (crearlo si no existe),
 restringirlo a `main` y usar sus secciones **Environment secrets** y
 **Environment variables**. Configurar:
 
 | Ubicación | Nombre | Cuándo se necesita |
 | --- | --- | --- |
-| Secrets de repositorio o environment | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | ECR, EKS y conexión SSM; renovarlos con cada sesión del Lab. |
+| Secrets de repositorio | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | ECR, EKS y conexión SSM; renovarlos juntos con cada sesión del Lab. |
 | Secret de repositorio | `TF_STATE_BUCKET` | Workflow de la capa de datos; el usuario ya indicó que está declarado. |
-| Variables del environment `vault-lab` | `VAULT_INSTANCE_ID`, `VAULT_CA_CERT_B64` | EC2 y certificado público del Vault instalado. |
-| Secret del environment `vault-lab` | `VAULT_CI_TOKEN` | Lectura del KV durante CD; emitirlo al final y renovarlo antes de expirar. |
-| Variable de repositorio | `ENABLE_VAULT_LAB=true` | **Activar únicamente después de superar las tres puertas anteriores.** |
+| Variables del environment `vault-lab` | `VAULT_INSTANCE_ID`, `VAULT_SSM_BUCKET` | EC2 exacta y bucket de transferencias de Ansible. |
+| Variable del environment `vault-lab` | `VAULT_AUTOMATION_READY=true` | Activar al final de la migración y configuración OIDC verificadas. |
+| Variable de repositorio | `AWS_ACCOUNT_ID` | Comprobación de cuenta al renovar las claves mediante el helper. |
 
 No configurar las nueve credenciales de aplicación como GitHub secrets: viven
 en Vault y el CD las entrega al Secret de Kubernetes durante el despliegue.
 
 Si GitHub CLI ya tiene acceso de administrador al repositorio, se puede completar
 esta fase desde la misma terminal WSL que tiene exportadas las tres credenciales
-AWS. El operador privado, el túnel SSM y el certificado deben estar disponibles:
+AWS. El operador privado, el túnel SSM, el certificado y el journal de la migración
+KMS verificada deben estar disponibles:
 
 ```bash
 python3 scripts/vault/configure_actions.py \
   --repo OWNER/REPOSITORY \
   --instance-id INSTANCE-ID \
   --expected-account AWS-ACCOUNT-ID \
-  --ci-output "$HOME/vault-custody/ci-$(date -u +%Y%m%d-%H%M%S).json"
+  --ssm-bucket "$ANSIBLE_SSM_BUCKET" \
+  --migration-journal RUTA-PRIVADA-DEL-JOURNAL.migration.json
 ```
 
-El helper comprueba la cuenta AWS y Vault, emite un token CI de lectura con
-vigencia máxima de cuatro horas y transfiere los valores mediante la entrada
-estándar de `gh`, sin imprimirlos ni incluirlos en argumentos. Sincroniza las
-tres credenciales AWS tanto en el repositorio como en `vault-lab`, configura
-instancia y certificado, restringe el environment a `main` y activa la variable
-de repositorio al final. Si hay reglas de revisión, espera o ramas adicionales,
+El helper verifica cuenta, operador y migración, configura OIDC y transfiere las
+tres claves AWS mediante stdin de `gh`. Retira duplicados AWS del environment,
+que podrían anular los valores nuevos del repositorio, y elimina el token CI
+heredado. Configura los datos públicos, limita el environment a `main` y activa
+la variable al final. Si hay reglas de revisión, espera o ramas adicionales,
 se detiene para conservarlas. Un fallo puede dejar valores parcialmente
-actualizados; resolverlo y repetir con un archivo de custodia nuevo antes del
-build. Repetir la transferencia cuando cambie la sesión AWS o expire el token CI.
+actualizados: resolverlo y repetir antes del build. No se renueva ningún token
+CI manualmente; Vault emite uno por job. Ver
+[pasos iniciales y renovación de tres claves](aws-automatic-deployment.md).
 
 ### 5. Merge, imágenes y Helm
 
 1. Resolver el check heredado de GKE si la protección de `main` lo exige, y
    fusionar `development` en `main`. El historial de ejecuciones fallidas seguirá
    visible; nuevas ejecuciones usan los workflows de `main` actualizados.
-2. Para que el build ECR arranque por el merge, el commit debe tocar una de las
-   rutas filtradas en `.github/workflows/ci-docker-ecr.yaml`. Si no arranca,
-   lanzar manualmente **CI: Docker build & push a ECR** desde `main`.
+2. El merge debe proceder de `development` en el mismo repositorio. También
+   activa el pipeline si solo cambia documentación. Cerrar sin fusionar, otras
+   ramas y forks no despliegan. Se admite ejecución manual desde `main`.
 3. Verificar primero las pruebas PostgreSQL/Vault y luego la publicación de
-   imágenes etiquetadas con el SHA. El CD **CD: Helm deploy a EKS** se dispara
-   tras un ECR exitoso. Con `ENABLE_VAULT_LAB=true` ejecuta
-   `vault-lab-deploy`: verifica ECR/CSI, abre SSM, lee Vault, crea el Secret,
+   imágenes etiquetadas con el SHA del merge. Al terminar todas, ese pipeline
+   llama a **CD: Helm deploy a EKS** con el mismo SHA y ejecuta
+   `vault-lab-deploy`: reanuda las instancias conocidas, aplica Ansible,
+   verifica ECR/CSI, abre SSM, autentica con OIDC, lee Vault, crea el Secret,
    despliega Helm y ejecuta el smoke funcional. El frontend queda privado en
    `boutique-vault-lab`; acceder con el port-forward de
    [la guía](vault-lab.md#4-activar-github-actions).
@@ -187,10 +192,11 @@ acreditan por sí solas un despliegue AWS.
 - EKS/Helm falla: revisar el paso concreto, el addon CSI, la StorageClass,
   capacidad de nodos y las imágenes ECR antes de repetir. No borrar PVC ni
   Secret para “empezar de cero”.
-- Vault/SSM falla: comprobar instancia `Online`, túnel, TLS, unseal y vigencia
-  del token CI. La [guía de Vault](vault-lab.md)
+- Vault/SSM falla: comprobar instancia `Online`, túnel, TLS, acceso a KMS y
+  confianza OIDC. La [guía de Vault](vault-lab.md)
   documenta la recuperación y el rollback.
-- Sesión del Lab o token CI caducados: renovar ambos antes de reejecutar el CD.
+- Sesión del Lab caducada: iniciar el Lab, renovar juntas las tres claves AWS
+  del repositorio y repetir. No se guarda un token CI que haya que renovar.
 
 Esta lista se comprueba para cada cuenta y sesión del laboratorio. Registrar las
 salidas reales de Terraform, Ansible, almacenamiento, ECR y CD en la matriz de

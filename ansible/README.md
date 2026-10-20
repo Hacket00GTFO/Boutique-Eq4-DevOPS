@@ -21,7 +21,18 @@ durante operaciones que procesen material privado.
 
 Los roles no fuerzan renovaciones TLS: repetir debe producir `changed=0`.
 Para una renovación planificada: `ansible-playbook site.yml -e vault_tls_renew=true`,
-actualizar la confianza de CI/navegador y ejecutar unseal si el servicio reinició.
-Después de un cambio de IP pública, volver a ejecutar Ansible para actualizar SANs.
+actualizar la confianza del navegador. CI recupera el certificado público por
+SSM en cada ejecución. Los SAN usan localhost e IP privada, de modo que cambiar
+la IP pública no provoca otra renovación. Usar el túnel para abrir la UI.
+
+La ruta automática ejecuta `site.yml` en cada despliegue con `--limit` al ID
+configurado. El servicio conserva `/etc/vault.d/seal.hcl`, instalado una sola
+vez por `kms-migration.yml`. Ese playbook reinicia el servicio y debe ejecutarse
+mediante el helper de migración, después de crear el snapshot y con quorum;
+no forma parte de los despliegues habituales. Con auto-unseal KMS verificado,
+un reinicio normal no requiere presentar participaciones.
+
+Seguir la [migración y activación de Actions](../docs/aws-automatic-deployment.md)
+antes de habilitar `VAULT_AUTOMATION_READY`.
 
 Configuración, bootstrap, recuperación y evidencias: [guía de Fase 3](../docs/vault-lab.md).

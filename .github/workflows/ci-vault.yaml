@@ -6,7 +6,11 @@ on:
     branches: [main]
     paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
   workflow_dispatch: {}
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -15,6 +19,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -42,7 +48,8 @@ jobs:
           ansible-playbook -i 'localhost,' site.yml --syntax-check
           ansible-playbook -i 'localhost,' local-check.yml --syntax-check
           ansible-playbook -i 'localhost,' root-recovery.yml --syntax-check
-          ansible-lint site.yml local-check.yml root-recovery.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+          ansible-playbook -i 'localhost,' kms-migration.yml --syntax-check
+          ansible-lint site.yml local-check.yml root-recovery.yml kms-migration.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1

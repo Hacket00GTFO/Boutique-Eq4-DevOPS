@@ -3,7 +3,11 @@ on:
   pull_request:
     paths: ["src/**", "docker-compose*.yml", "scripts/**", "helm-chart/**", ".github/workflows/ci-postgres-integration.yaml"]
   workflow_dispatch: {}
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -12,6 +16,8 @@ jobs:
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@v7
+      with:
+        ref: ${{ inputs.ref || github.sha }}
     - name: Credential bootstrap regression tests
       shell: pwsh
       run: ./scripts/test-setup-integration.ps1
