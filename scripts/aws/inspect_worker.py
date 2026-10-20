@@ -6,7 +6,7 @@ import time
 from prepare_vault_kms import ACCOUNT, PreparationError, aws
 
 PROBE = r'''
-import json,re,subprocess
+import json,re,subprocess,shutil
 result={}
 def run(args):
     return subprocess.run(args,capture_output=True,text=True,timeout=25,check=False).stdout.strip()
@@ -19,6 +19,16 @@ for unit in ('nodeadm-config','nodeadm-run','kubelet','containerd'):
             line=re.sub(r'[A-Za-z0-9+/=_-]{80,}|(?:AKIA|ASIA)[A-Z0-9]{16}','[redacted]',line)
             lines.append(line[:400])
     result[unit]={'state':state,'diagnostics':lines[-12:]}
+if shutil.which('aws'):
+    check=subprocess.run(['aws','ec2','describe-instances','--region','us-east-1','--instance-ids',TARGET_ID,
+                          '--query','Reservations[].Instances[].InstanceId','--output','json','--no-cli-pager'],
+                         capture_output=True,text=True,timeout=30,check=False)
+    result['current_ec2_permission']={'describe_allowed':check.returncode==0}
+    if check.returncode:
+        match=re.search(r'An error occurred \(([A-Za-z0-9_.-]+)\)',check.stderr)
+        result['current_ec2_permission']['error_code']=match.group(1) if match else 'request_failed'
+else:
+    result['current_ec2_permission']={'aws_cli_available':False}
 print(json.dumps(result))
 '''
 
@@ -42,7 +52,7 @@ def main():
     if not any(item.get('PingStatus') == 'Online' for item in status.get('InstanceInformationList', [])):
         raise PreparationError('The storage worker is not online through SSM.')
     response = aws('ssm', 'send-command', '--instance-ids', target, '--document-name', 'AWS-RunShellScript',
-                   '--parameters', json.dumps({'commands': ["python3 - <<'PY'\n" + PROBE + '\nPY'], 'executionTimeout': ['90']}),
+                   '--parameters', json.dumps({'commands': ["python3 - <<'PY'\nTARGET_ID=" + json.dumps(target) + '\n' + PROBE + '\nPY'], 'executionTimeout': ['90']}),
                    '--comment', 'Read owned EKS worker startup service diagnostics')
     command_id = response['Command']['CommandId']
     for _ in range(30):
