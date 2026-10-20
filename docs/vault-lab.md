@@ -97,15 +97,26 @@ de objetos abandonados tras un día. No reutilizar el bucket de estado. El
 preflight rechaza buckets versionados, incluso si el versionado fue suspendido.
 
 Para PostgreSQL se necesita el addon EBS CSI activo y una StorageClass
-predeterminada funcional. Configurarlos con los permisos/roles existentes que
-admita el Lab antes de continuar. No sustituir el PVC por almacenamiento efímero.
+funcional. En este Learner Lab, el grupo `boutique-eq4-eks-storage` usa
+`LabRole` en un nodo con taint; el controlador CSI debe fijarse a ese nodo.
+Los nodos de la aplicación mantienen su rol limitado. La clase heredada `gp2`
+no sustituye al CSI: usar una clase con provisioner `ebs.csi.aws.com`, probar
+un PVC antes de Helm y no sustituirlo por almacenamiento efímero. Los permisos
+amplios de `LabRole` hacen que esta configuración sea solo para el laboratorio.
 
 ```bash
 aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
 aws eks describe-addon --cluster-name boutique-eq4-eks --addon-name aws-ebs-csi-driver
+kubectl apply -f kubernetes-manifests/aws-ebs-gp3-storageclass.yaml
 kubectl get storageclass
 kubectl create namespace boutique-vault-lab
 ```
+
+Antes de crear PostgreSQL, ejecutar el Job temporal
+`kubernetes-manifests/aws-ebs-smoke.yaml`: debe completar con `ebs-ok` y el PVC
+debe quedar `Bound`. El Job corre en un nodo normal, mientras el controlador
+CSI permanece en el nodo `storage-controller`. Tras guardar el resultado,
+eliminar `boutique-storage-smoke` para retirar el volumen de prueba.
 
 ## 2. Instalar y demostrar idempotencia
 
@@ -277,6 +288,49 @@ Helm antes de reintentar; no inventar contraseñas nuevas.
 Registrar revisión de Helm y `resourceVersion` del Secret antes/después sin
 extraer `data`. Restaurar cada alteración antes del siguiente ensayo. No sellar
 Vault ni cambiar políticas de un entorno compartido durante actividad real.
+
+### Recuperar acceso cuando una clave PGP no se abre
+
+Si dos custodios todavía pueden descifrar sus participaciones, abrir Vault con
+ese quorum y conservar la instalación. La generación de otro token raíz no
+requiere descifrar el token raíz original ni reinicializar el almacenamiento.
+En Vault 2.2, `generate-root` exige autenticación por defecto. Este helper usa
+SSM/Ansible para habilitar temporalmente solo esa familia de endpoints, recarga
+con SIGHUP y vuelve a exigir autenticación al terminar o al fallar.
+
+```bash
+export GPG_TTY="$(tty)"
+export RECOVERED_ROOT="$HOME/vault-custody/root-recovered-$(date -u +%Y%m%d-%H%M%S).json"
+python scripts/vault/recover_root.py \
+  --instance-id INSTANCE-ID \
+  --init-file "$HOME/vault-custody/init.json" \
+  --shares 2 3 \
+  --recipient-pgp "$HOME/vault-custody/custodio2.pub" \
+  --output "$RECOVERED_ROOT"
+```
+
+Se requiere la sesión AWS activa, `ANSIBLE_SSM_BUCKET`, el entorno virtual de
+Ansible, el túnel SSM y `VAULT_CACERT`. El helper valida primero ambas claves y
+prueba localmente el destinatario elegido. Guarda el nuevo token cifrado con PGP
+en un archivo exclusivo 0600 fuera del repo, verifica el token en memoria y
+comprueba HTTP 403 al cerrar la ventana. No imprime participaciones ni tokens.
+Generar un nuevo token no revoca el token raíz anterior; gestionar sus accessors
+en la sesión administrativa posterior, después de verificar al operador.
+
+Si la terminal se cierra por la fuerza o no aparece la confirmación de cierre,
+restablecerlo con la misma sesión AWS y el túnel disponibles:
+
+```bash
+python scripts/vault/recover_root.py --instance-id INSTANCE-ID --close-only
+```
+
+Después configurar Vault, emitir y comprobar el operador antes de revocar los
+tokens raíz. Sustituir la clave PGP inaccesible mediante una ceremonia de rekey
+con verificación, conservar las participaciones anteriores hasta completar esa
+ceremonia y renovar las copias cifradas de custodia.
+
+Referencias: [configuración de acceso de recuperación](https://developer.hashicorp.com/vault/docs/configuration#enable_unauthenticated_access)
+y [API de generación por quorum](https://developer.hashicorp.com/vault/api-docs/system/generate-root).
 
 ### Reconstrucción
 

@@ -33,3 +33,10 @@ data "aws_iam_roles" "eks_cluster" {
 data "aws_iam_roles" "eks_nodes" {
   name_regex = ".*-LabEksNodeRole-.*"
 }
+
+# Learner Lab no permite adjuntar políticas al rol de nodos ni crear un rol
+# para EBS CSI. LabRole ya tiene los permisos EC2 necesarios y confía en EC2.
+# Se usa solo en un grupo aislado para el controlador de almacenamiento.
+data "aws_iam_role" "lab_storage" {
+  name = "LabRole"
+}

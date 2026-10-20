@@ -1,0 +1,63 @@
+- name: Temporarily allow quorum recovery of a Vault root token
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars:
+    vault_recovery_enabled: false
+  tasks:
+    - name: Require one explicitly selected Vault instance
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - vault_recovery_instance is defined
+          - vault_recovery_instance is match('^i-[0-9a-f]{8,17}$')
+          - inventory_hostname == vault_recovery_instance
+          - ansible_aws_ssm_bucket_name | length > 0
+
+    - name: Read the existing server configuration
+      ansible.builtin.slurp:
+        src: /etc/vault.d/vault.hcl
+      register: vault_recovery_config
+      no_log: true
+
+    - name: Preserve independently configured recovery settings
+      ansible.builtin.assert:
+        that:
+          - >-
+            (vault_recovery_config.content | b64decode |
+            regex_replace('(?ms)^# BEGIN BOUTIQUE ROOT RECOVERY\n.*?^# END BOUTIQUE ROOT RECOVERY\n?', '') |
+            regex_search('(?m)^\s*enable_unauthenticated_access\s*=')) is none
+        fail_msg: Existing recovery configuration requires manual review.
+      no_log: true
+
+    - name: Set the temporary root recovery window
+      ansible.builtin.blockinfile:
+        path: /etc/vault.d/vault.hcl
+        marker: '# {mark} BOUTIQUE ROOT RECOVERY'
+        block: 'enable_unauthenticated_access = ["generate-root"]'
+        state: "{{ 'present' if vault_recovery_enabled | bool else 'absent' }}"
+        owner: vault
+        group: vault
+        mode: '0600'
+
+    # SIGHUP reloads this setting without restarting or sealing Vault.
+    # Always reload, including retries after an interrupted previous run.
+    - name: Reload recovery access without restarting Vault
+      ansible.builtin.command:
+        argv:
+          - /bin/systemctl
+          - kill
+          - --kill-who=main
+          - --signal=HUP
+          - vault.service
+      changed_when: true
+
+    - name: Check the existing TLS listener
+      ansible.builtin.uri:
+        url: https://localhost:8200/v1/sys/health
+        ca_path: /etc/vault.d/tls/vault.crt
+        status_code: [200, 429, 503]
+      register: vault_recovery_health
+      retries: 10
+      delay: 1
+      until: vault_recovery_health.status in [200, 429, 503]

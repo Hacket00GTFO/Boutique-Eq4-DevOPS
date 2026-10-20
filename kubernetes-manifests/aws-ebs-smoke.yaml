@@ -1,0 +1,44 @@
+# Integracion temporal: un Job escribe y lee un archivo en un PVC EBS CSI.
+# Eliminar este namespace despues de guardar la evidencia de la prueba.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-storage-smoke
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gp3-smoke
+  namespace: boutique-storage-smoke
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: boutique-ebs-gp3
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gp3-smoke
+  namespace: boutique-storage-smoke
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: write-read
+          image: public.ecr.aws/docker/library/busybox:latest
+          command:
+            - sh
+            - -c
+            - echo ebs-ok > /data/check.txt && cat /data/check.txt
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gp3-smoke

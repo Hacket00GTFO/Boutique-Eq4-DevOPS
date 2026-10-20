@@ -12,6 +12,28 @@ import threading
 import time
 
 
+def session_diagnostic(line):
+    """Classify AWS failures without forwarding process output or request details."""
+    normalized = line.lower()
+    for patterns, message in (
+        (('expiredtoken', 'requestexpired', 'security token included in the request is expired'),
+         'SSM: temporary AWS credentials expired; refresh all three Learner Lab credentials.'),
+        (('unable to locate credentials', 'nocredentials'),
+         'SSM: AWS credentials are missing in this terminal.'),
+        (('invalidclienttokenid', 'unrecognizedclientexception'),
+         'SSM: AWS credentials are invalid; check that all three belong to the same Lab session.'),
+        (('accessdenied', 'not authorized to perform'),
+         'SSM: AWS denied session access; verify the active role and StartSession permission.'),
+        (('targetnotconnected',),
+         'SSM: the target instance is not connected; check instance state and SSM Online status.'),
+        (('sessionmanagerplugin is not found', 'session-manager-plugin: not found'),
+         'SSM: the Session Manager plugin is missing from PATH.'),
+    ):
+        if any(pattern in normalized for pattern in patterns):
+            return message
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instance-id', required=True)
@@ -43,7 +65,12 @@ def main():
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
         def read_session():
+            reported = set()
             for line in child.stdout:
+                diagnostic = session_diagnostic(line)
+                if diagnostic and diagnostic not in reported:
+                    reported.add(diagnostic)
+                    print(diagnostic, file=sys.stderr, flush=True)
                 match = re.search(r'Starting session with SessionId:\s*([\w@.:+=,-]+)', line)
                 if match:
                     session.append(match.group(1))
@@ -54,6 +81,7 @@ def main():
         ready = False
         while not stop.wait(0.25):
             if child.poll() is not None:
+                reader.join(timeout=2)
                 raise RuntimeError('SSM exited before the tunnel was closed.')
             if not ready:
                 try:

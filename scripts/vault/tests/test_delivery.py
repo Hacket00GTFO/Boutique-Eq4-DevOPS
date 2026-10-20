@@ -25,12 +25,19 @@ class Cluster:
         self.previous = deploy.secret_manifest(values) if values else None
         self.installed, self.pvcs, self.fail_upgrade = installed, pvcs, fail_upgrade
         self.commands, self.writes = [], []
+        self.storage = [{'metadata': {'name': 'boutique-ebs-gp3'},
+                         'provisioner': 'ebs.csi.aws.com', 'volumeBindingMode': 'WaitForFirstConsumer'}]
+        self.csi = True
 
     def run(self, args, payload=None, timeout=90):
         self.commands.append(args)
         words = ' '.join(args)
         if 'get storageclass' in words:
-            return json.dumps({'items': [{'metadata': {'annotations': {'storageclass.kubernetes.io/is-default-class': 'true'}}}]})
+            return json.dumps({'items': self.storage})
+        if 'get csidriver' in words:
+            if not self.csi:
+                raise SafeError('EBS CSI is not registered')
+            return json.dumps({'metadata': {'name': 'ebs.csi.aws.com'}})
         if 'get secret' in words:
             return json.dumps(self.previous) if self.previous else ''
         if 'get pvc' in words:
@@ -124,7 +131,32 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(cluster.writes[0]['data']['ADMIN_API_TOKEN']).decode(), new['ADMIN_API_TOKEN'])
         upgrade = next(a for a in cluster.commands if a[:2] == ['helm', 'upgrade'])
         self.assertIn('postgresIntegration.rolloutRevision=123.2', upgrade)
+        self.assertIn('postgresIntegration.database.storageClassName=boutique-ebs-gp3', upgrade)
         self.assertNotIn(new['ADMIN_API_TOKEN'], ' '.join(' '.join(c) for c in cluster.commands))
+
+    def test_default_class_does_not_replace_the_explicit_lab_class(self):
+        cluster = Cluster(installed=False)
+        cluster.storage = [{'metadata': {'name': 'gp2', 'annotations': {
+            'storageclass.kubernetes.io/is-default-class': 'true'}},
+            'provisioner': 'kubernetes.io/aws-ebs'}]
+        with patch.object(deploy, 'run', cluster.run), self.assertRaisesRegex(SafeError, 'boutique-ebs-gp3'):
+            deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+        self.assertEqual(cluster.writes, [])
+
+    def test_incompatible_lab_storage_fails_before_writing_secrets(self):
+        for change in ({'provisioner': 'other.driver'}, {'volumeBindingMode': 'Immediate'}):
+            cluster = Cluster(installed=False)
+            cluster.storage[0].update(change)
+            with self.subTest(change=change), patch.object(deploy, 'run', cluster.run), self.assertRaises(SafeError):
+                deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+            self.assertEqual(cluster.writes, [])
+
+    def test_missing_ebs_csi_fails_before_writing_secrets(self):
+        cluster = Cluster(installed=False)
+        cluster.csi = False
+        with patch.object(deploy, 'run', cluster.run), self.assertRaisesRegex(SafeError, 'CSI'):
+            deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+        self.assertEqual(cluster.writes, [])
 
     def test_helm_failure_restores_secret_and_recovers_consumers(self):
         old = seed_values()

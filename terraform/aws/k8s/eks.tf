@@ -48,3 +48,36 @@ resource "aws_eks_node_group" "main" {
 
   depends_on = [aws_eks_cluster.main]
 }
+
+# EBS CSI necesita permisos EC2 para aprovisionar los PVC de PostgreSQL.
+# Learner Lab deniega crear roles IAM y ampliar LabEksNodeRole. Mantener
+# LabRole en un nodo dedicado evita dar sus permisos a los pods de la app.
+resource "aws_eks_node_group" "storage_controller" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-storage"
+  node_role_arn   = data.aws_iam_role.lab_storage.arn
+  subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 1
+  }
+
+  labels = {
+    "boutique.dev/node-purpose" = "storage-controller"
+  }
+
+  taint {
+    key    = "boutique.dev/storage-controller"
+    value  = "true"
+    effect = "NO_SCHEDULE"
+  }
+
+  depends_on = [aws_eks_cluster.main]
+}
