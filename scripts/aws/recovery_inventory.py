@@ -1,5 +1,6 @@
 """Read-only recovery inventory; never opens disks or prints credentials."""
 import json
+import re
 import subprocess
 import sys
 
@@ -10,7 +11,8 @@ def query(*args):
     result = subprocess.run(['aws', *args, '--region', 'us-east-1', '--no-cli-pager'],
                             capture_output=True, text=True, timeout=90, check=False)
     if result.returncode:
-        return {'unavailable': True}
+        error = re.search(r'An error occurred \(([A-Za-z0-9_.-]+)\)', result.stderr)
+        return {'unavailable': True, 'error_code': error.group(1) if error else 'request_failed'}
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
@@ -35,11 +37,27 @@ def main():
     report['ebs_snapshots'] = [{key: item.get(key) for key in
                                 ('SnapshotId', 'VolumeId', 'State', 'StartTime', 'VolumeSize', 'Encrypted', 'KmsKeyId', 'Tags')}
                                for item in snapshots.get('Snapshots', [])] if not snapshots.get('unavailable') else snapshots
+    recycling = query('rbin', 'list-resources', '--resource-type', 'EBS_SNAPSHOT')
+    report['recycle_bin_snapshots'] = recycling.get('Resources', recycling)
+    vaults = query('backup', 'list-backup-vaults')
+    report['aws_backup'] = vaults if vaults.get('unavailable') else []
+    for vault in vaults.get('BackupVaultList', []):
+        points = query('backup', 'list-recovery-points-by-backup-vault', '--backup-vault-name', vault['BackupVaultName'])
+        report['aws_backup'].append({'vault': vault['BackupVaultName'], 'points': [
+            {key: item.get(key) for key in ('RecoveryPointArn', 'ResourceType', 'Status', 'CreationDate')}
+            for item in points.get('RecoveryPoints', [])] if not points.get('unavailable') else points})
+    keys = query('kms', 'list-keys')
+    report['kms_keys'] = keys.get('Keys', keys)
     buckets = query('s3api', 'list-buckets')
     report['s3_buckets'] = [item['Name'] for item in buckets.get('Buckets', [])] if not buckets.get('unavailable') else buckets
     try:
         role_name = identity['Arn'].split(':assumed-role/', 1)[1].split('/', 1)[0]
-        role = query('iam', 'get-role', '--role-name', role_name)['Role']['Arn']
+        role_result = query('iam', 'get-role', '--role-name', role_name)
+        if role_result.get('unavailable'):
+            report['kms_permissions_advisory'] = role_result
+            print(json.dumps(report, indent=2))
+            return
+        role = role_result['Role']['Arn']
         permissions = query('iam', 'simulate-principal-policy', '--policy-source-arn', role,
                             '--action-names', 'kms:CreateKey', 'kms:PutKeyPolicy', 'kms:TagResource',
                             'kms:EnableKeyRotation', '--resource-arns', '*')
