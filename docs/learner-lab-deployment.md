@@ -40,6 +40,10 @@ lugar del despliegue Helm normal; con Vault aún sin instalar, el CD fallaría.
    bucket de estado, pero con su propia clave S3; revisar `plan` antes de
    aplicar. La carpeta raíz `terraform/` es heredada de GCP y no forma parte
    de esta ruta AWS.
+   En Learner Lab, confirmar que existen los roles distintos
+   `LabEksClusterRole` y `LabEksNodeRole` (sus nombres completos incluyen
+   prefijos y sufijos variables). El stack descubre cada uno por nombre; si
+   falta alguno o aparecen varios candidatos, detenerse antes de `apply`.
 3. Si EKS/ECR no existen, aplicar `terraform/aws/k8s` desde el controlador:
 
    ```bash

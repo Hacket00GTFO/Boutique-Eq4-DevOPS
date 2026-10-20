@@ -2,7 +2,7 @@
 
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
-  role_arn = data.aws_iam_role.lab_role.arn
+  role_arn = one(data.aws_iam_roles.eks_cluster.arns)
   version  = "1.35"
 
   vpc_config {
@@ -11,8 +11,8 @@ resource "aws_eks_cluster" "main" {
 }
 
 # Por defecto, AWS limita a 1 "salto" de red el acceso de una instancia EC2
-# a su propio servicio de metadatos (de ahi salen las credenciales de
-# LabRole). Un proceso dentro de un pod esta a 2 saltos del host, asi que
+# a su propio servicio de metadatos (de ahi salen las credenciales del rol de
+# los nodos). Un proceso dentro de un pod esta a 2 saltos del host, asi que
 # sin esto boto3 dentro de los contenedores nunca encuentra credenciales
 # (NoCredentialsError). Subimos el limite a 2 para que los pods si puedan.
 resource "aws_launch_template" "nodes" {
@@ -32,7 +32,7 @@ resource "aws_launch_template" "nodes" {
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.cluster_name}-nodes"
-  node_role_arn   = data.aws_iam_role.lab_role.arn
+  node_role_arn   = one(data.aws_iam_roles.eks_nodes.arns)
   subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
 
   launch_template {
