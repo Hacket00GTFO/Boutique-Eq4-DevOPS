@@ -21,7 +21,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: boutique-aws-release-${{ github.ref }}
+  group: boutique-aws-release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'inventory' && 'inventory' || 'deployment' }}
   cancel-in-progress: false
 
 jobs:
@@ -39,6 +39,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
       - name: Inspect retained backups and KMS permissions without changing resources
         run: python3 scripts/aws/recovery_inventory.py
   prepare-vault-kms:

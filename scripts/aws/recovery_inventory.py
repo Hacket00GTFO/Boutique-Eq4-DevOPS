@@ -7,6 +7,40 @@ import sys
 ACCOUNT = '716142453772'
 
 
+def kubernetes_inventory(name):
+    def execute(args):
+        result = subprocess.run(args, capture_output=True, text=True, timeout=45, check=False)
+        if result.returncode:
+            code = 'KubernetesAPIUnavailable'
+            if 'Forbidden' in result.stderr:
+                code = 'KubernetesForbidden'
+            elif 'Unauthorized' in result.stderr or 'provide credentials' in result.stderr:
+                code = 'KubernetesUnauthorized'
+            return {'unavailable': True, 'error_code': code}
+        return {'output': result.stdout}
+    context = execute(['aws', 'eks', 'update-kubeconfig', '--name', name, '--region', 'us-east-1', '--no-cli-pager'])
+    if context.get('unavailable'):
+        return context
+    response = execute(['kubectl', 'get', 'nodes', '-o', 'json', '--request-timeout=30s'])
+    if response.get('unavailable'):
+        return response
+    nodes = []
+    for item in json.loads(response['output']).get('items', []):
+        ready = next((value for value in item.get('status', {}).get('conditions', []) if value.get('type') == 'Ready'), {})
+        nodes.append({'name': item['metadata']['name'], 'purpose': item['metadata'].get('labels', {}).get('boutique.dev/node-purpose'),
+                      'ready': ready.get('status'), 'reason': ready.get('reason'), 'message': ready.get('message', '')[:300]})
+    response = execute(['kubectl', '-n', 'kube-system', 'get', 'pods', '-o', 'json', '--request-timeout=30s'])
+    if response.get('unavailable'):
+        return {'nodes': nodes, 'system_pods': response}
+    pods = [{'name': item['metadata']['name'], 'phase': item.get('status', {}).get('phase'),
+             'node': item.get('spec', {}).get('nodeName'),
+             'waiting_reasons': [container.get('state', {}).get('waiting', {}).get('reason')
+                                 for container in item.get('status', {}).get('containerStatuses', [])
+                                 if container.get('state', {}).get('waiting')]}
+            for item in json.loads(response['output']).get('items', [])]
+    return {'nodes': nodes, 'system_pods': pods}
+
+
 def query(*args):
     result = subprocess.run(['aws', *args, '--region', 'us-east-1', '--no-cli-pager'],
                             capture_output=True, text=True, timeout=90, check=False)
@@ -56,6 +90,8 @@ def main():
             detail['addons'].append({field: item.get(field) for field in
                                     ('addonName', 'addonVersion', 'status', 'health', 'configurationValues')}
                                    if not result.get('unavailable') else result)
+        if name == 'boutique-eq4-eks' and cluster.get('status') == 'ACTIVE':
+            detail['kubernetes'] = kubernetes_inventory(name)
         report['eks_details'].append(detail)
     instances = query('ec2', 'describe-instances', '--filters', 'Name=tag:Name,Values=boutique-vault-lab')
     report['vault_instances'] = [{'id': item['InstanceId'], 'state': item['State']['Name'],
