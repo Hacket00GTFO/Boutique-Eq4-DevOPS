@@ -2,6 +2,14 @@ output "cluster_name" {
   value = aws_eks_cluster.main.name
 }
 
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "vault_subnet_id" {
+  value = aws_subnet.public_a.id
+}
+
 output "cluster_endpoint" {
   value = aws_eks_cluster.main.endpoint
 }

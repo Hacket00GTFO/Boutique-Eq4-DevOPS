@@ -9,7 +9,7 @@ on:
       operation:
         description: 'Development: read-only inventory or prepare the persistent Vault KMS key'
         type: choice
-        options: [inventory, prepare-vault-kms]
+        options: [inventory, prepare-vault-kms, rebuild-infrastructure]
         default: inventory
       existing_kms_key_arn:
         description: 'Resume KMS preparation with an already-created key; never recreate it'
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   recovery-inventory:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation != 'prepare-vault-kms'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'inventory'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -64,6 +64,35 @@ jobs:
             args+=(--existing-key-arn "$EXISTING_KMS_KEY_ARN")
           fi
           python3 scripts/aws/prepare_vault_kms.py "${args[@]}"
+  rebuild-infrastructure:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'rebuild-infrastructure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Recreate owned infrastructure from reviewed plans without replacing resources
+        run: python3 -u scripts/aws/provision_lab.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-infrastructure-metadata
+          path: .vault-lab/infrastructure.json
+          include-hidden-files: true
+          retention-days: 1
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
