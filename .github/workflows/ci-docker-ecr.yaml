@@ -9,7 +9,7 @@ on:
       operation:
         description: 'One-time preparation; normal main dispatch builds and deploys the release'
         type: choice
-        options: [inventory, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
+        options: [inventory, inspect-worker, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
         default: inventory
       existing_kms_key_arn:
         description: 'Resume KMS preparation with an already-created key; never recreate it'
@@ -21,7 +21,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: boutique-aws-release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'inventory' && 'inventory' || 'deployment' }}
+  group: boutique-aws-release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'inventory' || inputs.operation == 'inspect-worker') && 'inspection' || 'deployment' }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +44,22 @@ jobs:
           version: v1.35.9
       - name: Inspect retained backups and KMS permissions without changing resources
         run: python3 scripts/aws/recovery_inventory.py
+  inspect-worker:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'inspect-worker'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Read startup services on the single known storage worker through SSM
+        run: python3 scripts/aws/inspect_worker.py
   prepare-vault-kms:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'prepare-vault-kms'
     runs-on: ubuntu-24.04
@@ -231,7 +247,7 @@ jobs:
               (Path('.vault-lab/bootstrap') / name).unlink(missing_ok=True)
           PY
   release:
-    if: inputs.operation != 'initialize-local-data'
+    if: inputs.operation != 'initialize-local-data' && inputs.operation != 'inspect-worker'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
