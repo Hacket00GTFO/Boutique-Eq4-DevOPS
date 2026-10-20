@@ -39,7 +39,7 @@ jobs:
           echo "VAULT_TEST_BINARY=$RUNNER_TEMP/vault-bin/vault" >> "$GITHUB_ENV"
       - name: Real Vault TLS, KV, ACL, expiration, seal and delivery recovery
         run: python -m unittest discover -s scripts/vault/tests -v
-      - name: Direct AWS account boundary, node recovery and existing application custody
+      - name: Verify main push eligibility and read-only recovery tooling
         run: python -m unittest discover -s scripts/aws/tests -v
       - name: Operations callback privacy and bounded output
         run: python -m unittest discover -s scripts/tests -v
@@ -50,7 +50,8 @@ jobs:
           ansible-playbook -i 'localhost,' site.yml --syntax-check
           ansible-playbook -i 'localhost,' local-check.yml --syntax-check
           ansible-playbook -i 'localhost,' root-recovery.yml --syntax-check
-          ansible-lint site.yml local-check.yml root-recovery.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+          ansible-playbook -i 'localhost,' kms-migration.yml --syntax-check
+          ansible-lint site.yml local-check.yml root-recovery.yml kms-migration.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1

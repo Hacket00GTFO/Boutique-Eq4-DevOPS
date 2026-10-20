@@ -12,7 +12,6 @@
     common_name: localhost
     subject_alt_name: >-
       {{ ['IP:127.0.0.1', 'IP:' ~ private_ip_address]
-         + (['IP:' ~ public_ip_address] if public_ip_address is defined else [])
          + (vault_dns_names | map('regex_replace', '^', 'DNS:') | list) }}
     basic_constraints: ['CA:TRUE']
     basic_constraints_critical: true

@@ -1,86 +1,100 @@
 name: "CI: Docker build & push a ECR"
 
-# Every merged development -> main PR deploys, including documentation-only PRs.
+# A main push is visible on main; exact merged development PR metadata authorizes release.
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [closed]
   workflow_dispatch: {}
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: boutique-aws-release-main
+  group: boutique-aws-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  connection:
-    if: >-
-      (github.event_name == 'workflow_dispatch' &&
-       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')) ||
-      (github.ref == 'refs/heads/main' && github.event.pull_request.merged == true &&
-       github.event.pull_request.head.ref == 'development' &&
-       github.event.pull_request.base.ref == 'main' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+  recovery-inventory:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
-      - name: Connect directly to the target AWS account
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-      - name: Verify account, active Lab access and existing EKS/ECR
-        run: python3 scripts/aws/direct_release.py preflight
+      - name: Inspect retained backups and KMS permissions without changing resources
+        run: python3 scripts/aws/recovery_inventory.py
   release:
-    needs: connection
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event.pull_request.merged == true &&
-        github.event.pull_request.head.ref == 'development' &&
-        github.event.pull_request.base.ref == 'main' &&
-        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
-      image_tag: ${{ steps.release.outputs.image_tag }}
+      deploy: ${{ steps.gate.outputs.deploy }}
+      image_tag: ${{ steps.gate.outputs.image_tag }}
     steps:
-      - name: Resolve immutable merged release
-        id: release
-        env:
-          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          echo "image_tag=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
-          ref: ${{ steps.release.outputs.image_tag }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Require a release already present in main
+      - name: Verify the exact main SHA belongs to a merged development PR
+        id: gate
         env:
-          RELEASE_SHA: ${{ steps.release.outputs.image_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/aws/release_event.py
+      - name: Verify release ancestry
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         run: git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+  requirements:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
+    environment: vault-lab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      DATA_RECOVERY_VERIFIED: ${{ vars.DATA_RECOVERY_VERIFIED }}
+      VAULT_AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
+      VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
+      VAULT_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
+      VAULT_KMS_KEY_ARN: ${{ vars.VAULT_KMS_KEY_ARN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.image_tag }}
+          persist-credentials: false
+      - name: Require verified data recovery and Vault/KMS/OIDC/TLS configuration
+        run: python3 scripts/vault/require_automation.py configuration
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Require the target account, active EKS and the persistent KMS key
+        run: python3 scripts/vault/require_automation.py cloud
   integration:
     needs: release
+    if: needs.release.outputs.deploy == 'true'
     uses: ./.github/workflows/ci-postgres-integration.yaml
     with:
       ref: ${{ needs.release.outputs.image_tag }}
   vault-security:
     needs: release
+    if: needs.release.outputs.deploy == 'true'
     uses: ./.github/workflows/ci-vault.yaml
     with:
       ref: ${{ needs.release.outputs.image_tag }}
   build-and-push:
-    needs: [release, integration, vault-security]
+    needs: [release, requirements, integration, vault-security]
+    if: needs.release.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -103,8 +117,7 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.image_tag }}
           persist-credentials: false
-
-      - name: Configurar credenciales de AWS (Learner Lab)
+      - name: Configure the three AWS repository credentials
         id: aws
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -112,19 +125,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-
       - name: Require the target AWS account
         env:
           AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
         run: test "$AWS_ACCOUNT" = 716142453772
-
-      - name: Login a ECR
-        id: ecr-login
+      - name: Login to ECR
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build y push
+      - name: Build and push the exact release
         env:
-          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPO: boutique-eq4/${{ matrix.service.name }}
           BUILD_CONTEXT: ${{ matrix.service.context }}
           IMAGE_TAG: ${{ needs.release.outputs.image_tag }}
@@ -133,11 +143,11 @@ jobs:
           docker build -t "$REGISTRY/$REPO:$IMAGE_TAG" -t "$REGISTRY/$REPO:latest" "$BUILD_CONTEXT"
           docker push "$REGISTRY/$REPO:$IMAGE_TAG"
           docker push "$REGISTRY/$REPO:latest"
-
   deploy:
     needs: [release, build-and-push]
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/cd-helm-eks.yaml
     with:
       image_tag: ${{ needs.release.outputs.image_tag }}

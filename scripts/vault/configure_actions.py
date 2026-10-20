@@ -1,6 +1,5 @@
-"""Transfer the active lab credentials and a restricted Vault token directly to Actions."""
+"""One-time OIDC activation, or rotation of only the three repository AWS secrets."""
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -8,8 +7,8 @@ import re
 import subprocess
 import sys
 
-import bootstrap
-from common import DATA_PATH, SafeError, Vault, validate_values
+from common import SafeError, Vault
+from github_oidc import configure
 
 AWS_KEYS = ('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN')
 ENVIRONMENT = 'vault-lab'
@@ -19,6 +18,10 @@ def command(args, value=None):
     result = subprocess.run(args, input=value, text=True, capture_output=True, check=False)
     if result.returncode:
         # CLI errors can contain request details. Never forward stdout/stderr or stdin.
+        if args[0] == 'aws' and 'voc-cancel-cred' in result.stderr:
+            raise SafeError('Start the Learner Lab and load its three new credentials before updating GitHub.')
+        if args[:3] == ['aws', 'eks', 'describe-cluster'] and 'ResourceNotFoundException' in result.stderr:
+            raise SafeError('The expected EKS cluster is absent in us-east-1. Verify the AWS account and Terraform state; rotating credentials does not recreate infrastructure.')
         raise SafeError(f'{args[0]} failed; check authentication, permissions and connectivity.')
     return result.stdout
 
@@ -60,31 +63,48 @@ def prepare_environment(repo, current):
             api(repo, path + '/deployment-branch-policies', 'POST', {'name': 'main', 'type': 'branch'})
 
 
-def publish(repo, instance, credentials, certificate, ci_auth, environment):
+def rotate_credentials(repo, credentials):
+    for name in AWS_KEYS:
+        set_value(repo, 'secret', name, credentials[name])
+    # Remove stale environment overrides only after all repository values were uploaded.
+    path = f'environments/{ENVIRONMENT}/secrets'
+    existing = {entry['name'] for entry in api(repo, path + '?per_page=100').get('secrets', [])}
+    for name in AWS_KEYS:
+        if name in existing:
+            api(repo, path + '/' + name, 'DELETE')
+
+
+def publish(repo, instance, credentials, bucket, account, environment, key_arn):
     prepare_environment(repo, environment)
-    for name, value in credentials.items():
-        set_value(repo, 'secret', name, value)
-        # Environment secrets override repository secrets; keep both scopes in sync.
-        set_value(repo, 'secret', name, value, environment=True)
-    set_value(repo, 'secret', 'VAULT_CI_TOKEN', ci_auth['client_token'], environment=True)
+    set_value(repo, 'variable', 'VAULT_AUTOMATION_READY', 'false', environment=True)
+    rotate_credentials(repo, credentials)
     set_value(repo, 'variable', 'VAULT_INSTANCE_ID', instance, environment=True)
-    set_value(repo, 'variable', 'VAULT_CA_CERT_B64', base64.b64encode(certificate).decode(), environment=True)
-    # Select the Vault job only after every credential and trust setting was transferred.
-    set_value(repo, 'variable', 'ENABLE_VAULT_LAB', 'true')
+    set_value(repo, 'variable', 'VAULT_SSM_BUCKET', bucket, environment=True)
+    set_value(repo, 'variable', 'VAULT_KMS_KEY_ARN', key_arn, environment=True)
+    set_value(repo, 'variable', 'AWS_ACCOUNT_ID', account)
+    # The new workflow uses per-job OIDC, never this expired legacy token.
+    path = f'environments/{ENVIRONMENT}/secrets'
+    if any(s['name'] == 'VAULT_CI_TOKEN' for s in api(repo, path + '?per_page=100').get('secrets', [])):
+        api(repo, path + '/VAULT_CI_TOKEN', 'DELETE')
+    set_value(repo, 'variable', 'VAULT_AUTOMATION_READY', 'true', environment=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', required=True)
-    parser.add_argument('--instance-id', required=True)
-    parser.add_argument('--expected-account', required=True)
+    parser.add_argument('--instance-id')
+    parser.add_argument('--expected-account')
+    parser.add_argument('--ssm-bucket')
+    parser.add_argument('--rotate-aws-only', action='store_true')
+    parser.add_argument('--migration-journal', type=Path)
     parser.add_argument('--operator-file', type=Path, default=Path.home() / 'vault-custody/operator.json')
-    parser.add_argument('--ci-output', type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*', args.repo):
         raise SafeError('Supply a repository as owner/name.')
-    if not re.fullmatch(r'i-[0-9a-f]{8,17}', args.instance_id) or not re.fullmatch(r'[0-9]{12}', args.expected_account):
-        raise SafeError('Supply the expected instance and AWS account identifiers.')
+    if not args.expected_account and args.rotate_aws_only:
+        args.expected_account = api(args.repo, 'actions/variables/AWS_ACCOUNT_ID').get('value', '')
+    if not re.fullmatch(r'[0-9]{12}', args.expected_account or ''):
+        raise SafeError('Supply the expected AWS account once during automation setup.')
     credentials = {name: os.environ.get(name, '') for name in AWS_KEYS}
     if any(not value or any(c in value for c in '\r\n\0') for value in credentials.values()):
         raise SafeError('Export all three temporary AWS credentials in this terminal; do not paste them into chat.')
@@ -92,9 +112,29 @@ def main():
                                    '--output', 'json', '--no-cli-pager']))
     if identity.get('Account') != args.expected_account:
         raise SafeError('The active AWS account does not match the expected lab account.')
-    if not api(args.repo).get('permissions', {}).get('admin'):
+    # STS identity still works for some cancelled Lab sessions; require a real service permission.
+    command(['aws', 'eks', 'describe-cluster', '--name', 'boutique-eq4-eks',
+             '--region', 'us-east-1', '--no-cli-pager'])
+    repository = api(args.repo)
+    if not repository.get('permissions', {}).get('admin'):
         raise SafeError('GitHub environment configuration requires repository admin access.')
+    if args.rotate_aws_only:
+        rotate_credentials(args.repo, credentials)
+        print('PASS: all three repository AWS secrets updated; stale environment overrides removed.')
+        print('Merge development into main to build and deploy automatically; no Vault CI token is required.')
+        return
+    if (not re.fullmatch(r'i-[0-9a-f]{8,17}', args.instance_id or '')
+            or not re.fullmatch(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', args.ssm_bucket or '')
+            or not args.migration_journal):
+        raise SafeError('One-time setup requires the Vault instance, dedicated SSM bucket and verified KMS migration journal.')
+    journal = json.loads(args.migration_journal.read_text())
+    if (journal.get('phase') != 'verified' or journal.get('instance') != args.instance_id
+            or not journal.get('key', '').startswith('arn:aws:kms:us-east-1:' + args.expected_account + ':key/')):
+        raise SafeError('Complete and verify the one-time KMS migration before activation.')
     environment = api(args.repo, f'environments/{ENVIRONMENT}')
+    variables = api(args.repo, f'environments/{ENVIRONMENT}/variables?per_page=100').get('variables', [])
+    if {item['name']: item['value'] for item in variables}.get('DATA_RECOVERY_VERIFIED') != 'true':
+        raise SafeError('Verify application data recovery before activating deployment; retain all backups.')
     if any(rule.get('type') != 'branch_policy' for rule in environment.get('protection_rules', [])):
         raise SafeError('Existing environment protections require manual preservation before using this helper.')
     if os.name != 'posix' or args.operator_file.stat().st_mode & 0o077:
@@ -106,33 +146,13 @@ def main():
     policies = lookup['data'].get('policies', [])
     if 'boutique-operator' not in policies or 'root' in policies:
         raise SafeError('The supplied file must contain the named lab operator, not root.')
-    validate_values(operator.request('GET', DATA_PATH)[1]['data']['data'])
-    certificate = Path(os.environ['VAULT_CACERT']).read_bytes()
-    previous_token, previous_argv = os.environ.get('VAULT_TOKEN'), sys.argv
-    try:
-        os.environ['VAULT_TOKEN'] = operator_auth['client_token']
-        sys.argv = ['bootstrap.py', 'issue-ci', '--output', str(args.ci_output)]
-        bootstrap.main()
-    finally:
-        sys.argv = previous_argv
-        if previous_token is None:
-            os.environ.pop('VAULT_TOKEN', None)
-        else:
-            os.environ['VAULT_TOKEN'] = previous_token
-    ci_auth = json.loads(args.ci_output.read_text())
-    if (ci_auth.get('policies') != ['boutique-ci'] or not ci_auth.get('orphan') or
-            ci_auth.get('renewable') or not 0 < ci_auth.get('lease_duration', 0) <= 14400):
-        raise SafeError('The issued CI token does not meet the expected scope and lifetime.')
-    ci = Vault(token=ci_auth['client_token'])
-    validate_values(ci.request('GET', DATA_PATH)[1]['data']['data'])
-    code, _ = ci.request('GET', 'sys/audit', allowed=(200, 403))
-    if code != 403:
-        raise SafeError('The CI token unexpectedly has administration access.')
-    publish(args.repo, args.instance_id, credentials, certificate, ci_auth, environment)
-    print('PASS: AWS credentials synchronized in repository and vault-lab.')
-    print('PASS: restricted Vault CI token verified and uploaded (maximum lifetime: four hours).')
-    print('PASS: vault-lab restricted to main; ENABLE_VAULT_LAB configured as a repository variable.')
-    print(f'CI custody file: {args.ci_output}')
+    seal = operator.request('GET', 'sys/seal-status')[1]
+    if seal.get('type') != 'awskms' or seal.get('migration'):
+        raise SafeError('Vault must use the completed native AWS KMS seal before activation.')
+    configure(operator, args.repo, repository['id'], repository['owner']['id'])
+    publish(args.repo, args.instance_id, credentials, args.ssm_bucket, args.expected_account, environment, journal['key'])
+    print('PASS: three repository AWS secrets configured; environment overrides removed.')
+    print('PASS: main-only Vault automation activated; no stored CI token or public certificate variable is needed.')
 
 
 if __name__ == '__main__':
