@@ -116,6 +116,8 @@ def main():
         time.sleep(5)
     else:
         raise PreparationError('The created Vault instance did not become available through SSM.')
+    print('Resuming only the known EKS/Vault instances after a renewed Lab session.', flush=True)
+    command(['python3', 'scripts/vault/resume_lab.py', '--instance-id', instance], timeout=900)
     print('Installing the EBS CSI add-on on the dedicated LabRole storage node.', flush=True)
     version = aws('eks', 'describe-addon-versions', '--addon-name', 'aws-ebs-csi-driver',
                   '--kubernetes-version', '1.35')['addons'][0]['addonVersions'][0]['addonVersion']
