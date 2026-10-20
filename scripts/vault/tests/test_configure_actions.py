@@ -1,4 +1,5 @@
 """Credential transport and activation ordering without access to external services."""
+import base64
 from pathlib import Path
 import subprocess
 import sys
@@ -32,19 +33,20 @@ class ConfigureActionsTests(unittest.TestCase):
     def test_activation_follows_every_secret_and_trust_setting(self):
         credentials = {name: 'fixture-' + name for name in actions.AWS_KEYS}
         with patch.object(actions, 'prepare_environment') as prepare, \
-                patch.object(actions, 'set_value') as write, \
-                patch.object(actions, 'api', return_value={'secrets': []}):
-            actions.publish('owner/repo', 'i-12345678', credentials, 'dedicated-ssm-bucket',
-                            '123456789012', {})
+                patch.object(actions, 'set_value') as write:
+            actions.publish('owner/repo', 'i-12345678', credentials, b'public-certificate',
+                            {'client_token': 'fixture-ci'}, {})
         prepare.assert_called_once_with('owner/repo', {})
-        expected = [call('owner/repo', 'variable', 'VAULT_AUTOMATION_READY', 'false', environment=True)]
+        expected = []
         for name, value in credentials.items():
-            expected += [call('owner/repo', 'secret', name, value)]
+            expected += [call('owner/repo', 'secret', name, value),
+                         call('owner/repo', 'secret', name, value, environment=True)]
         expected += [
+            call('owner/repo', 'secret', 'VAULT_CI_TOKEN', 'fixture-ci', environment=True),
             call('owner/repo', 'variable', 'VAULT_INSTANCE_ID', 'i-12345678', environment=True),
-            call('owner/repo', 'variable', 'VAULT_SSM_BUCKET', 'dedicated-ssm-bucket', environment=True),
-            call('owner/repo', 'variable', 'AWS_ACCOUNT_ID', '123456789012'),
-            call('owner/repo', 'variable', 'VAULT_AUTOMATION_READY', 'true', environment=True),
+            call('owner/repo', 'variable', 'VAULT_CA_CERT_B64',
+                 base64.b64encode(b'public-certificate').decode(), environment=True),
+            call('owner/repo', 'variable', 'ENABLE_VAULT_LAB', 'true'),
         ]
         self.assertEqual(write.call_args_list, expected)
 
@@ -52,23 +54,9 @@ class ConfigureActionsTests(unittest.TestCase):
         with patch.object(actions, 'prepare_environment'), \
                 patch.object(actions, 'set_value', side_effect=SafeError('Upload failed')) as write:
             with self.assertRaises(SafeError):
-                actions.publish('owner/repo', 'i-12345678', {}, 'dedicated-ssm-bucket', '123456789012', {})
-        self.assertFalse(any(c.args[2:4] == ('VAULT_AUTOMATION_READY', 'true') for c in write.call_args_list))
-
-    def test_rotation_removes_stale_environment_copies_only_after_repo_uploads(self):
-        events = []
-        def set_value(*args, **kwargs):
-            events.append(('upload', args[2]))
-        def api(*args):
-            if len(args) == 2:
-                return {'secrets': [{'name': name} for name in actions.AWS_KEYS]}
-            events.append(('delete', args[1].rsplit('/', 1)[-1]))
-            return {}
-        credentials = {name: 'fixture' for name in actions.AWS_KEYS}
-        with patch.object(actions, 'set_value', set_value), patch.object(actions, 'api', api):
-            actions.rotate_credentials('owner/repo', credentials)
-        self.assertEqual(events, [('upload', n) for n in actions.AWS_KEYS] +
-                         [('delete', n) for n in actions.AWS_KEYS])
+                actions.publish('owner/repo', 'i-12345678', {'AWS_ACCESS_KEY_ID': 'fixture'},
+                                b'public-certificate', {'client_token': 'fixture-ci'}, {})
+        self.assertFalse(any(c.args[2] == 'ENABLE_VAULT_LAB' for c in write.call_args_list))
 
     def test_existing_review_or_timer_protection_is_not_replaced(self):
         for rule in ('required_reviewers', 'wait_timer', 'custom'):

@@ -3,7 +3,7 @@ ansible_aws_ssm_bucket_sse_mode: AES256
 vault_version: 2.2.0
 # Official vault_2.2.0_SHA256SUMS, Linux amd64 archive.
 vault_archive_sha256: 05d78b0ac842ca7c522fc297df91527cd43c15420c4c5c0a969d48a7b0ff7b6d
-# Add stable DNS names if available. Use the tunnel; public IP changes do not renew TLS.
+# Add a stable DNS name here if available. IP SANs follow EC2 on every run.
 vault_dns_names: [localhost]
 vault_tls_renew: false
 vault_public_certificate: "{{ playbook_dir }}/../.vault-lab/certs/{{ inventory_hostname }}.pem"

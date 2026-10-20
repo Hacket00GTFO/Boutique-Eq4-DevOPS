@@ -1,6 +1,6 @@
 name: "CD: Helm deploy a EKS"
 
-# Called by the merge pipeline only after every immutable ECR image was pushed.
+# Direct AWS authentication; the caller has already built every image for this SHA.
 on:
   workflow_call:
     inputs:
@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 jobs:
-  vault-lab-deploy:
+  helm-deploy:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
@@ -33,19 +33,13 @@ jobs:
         github.event.pull_request.head.ref == 'development' &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository))
-    permissions:
-      contents: read
-      id-token: write
-    environment: vault-lab
     concurrency:
-      group: boutique-vault-lab-deploy
+      group: boutique-eks-helm-deploy
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
-      VAULT_ADDR: https://127.0.0.1:18200
-      VAULT_CACERT: ${{ github.workspace }}/.vault-lab/certs/${{ vars.VAULT_INSTANCE_ID }}.pem
     steps:
       - uses: actions/checkout@v7
         with:
@@ -58,124 +52,36 @@ jobs:
           set -euo pipefail
           [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo 'A full release SHA is required'; exit 1; }
           git merge-base --is-ancestor "$IMAGE_TAG" origin/main
-      - name: Require completed one-time Vault automation setup
-        env:
-          AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
-        run: |
-          test "$AUTOMATION_READY" = true || {
-            echo 'Complete the one-time GitHub OIDC and KMS auto-unseal setup before deploying.'
-            exit 1
-          }
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Connect directly with the three AWS repository secrets
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-      - name: Resume existing Lab instances and wait for SSM
-        env:
-          VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
-        run: python scripts/vault/resume_lab.py --instance-id "$VAULT_INSTANCE_ID"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - name: Install pinned Ansible dependencies and SSM plugin
-        run: |
-          python -m pip install -r ansible/requirements.txt
-          ansible-galaxy collection install -r ansible/requirements.yml
-          bash scripts/vault/install-ssm-plugin.sh
-      - name: Apply persistent Vault configuration through Ansible
-        working-directory: ansible
-        env:
-          ANSIBLE_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
-          VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
-        run: |
-          set -euo pipefail
-          [[ "$VAULT_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]]
-          test -n "$ANSIBLE_SSM_BUCKET"
-          ansible-playbook site.yml --limit "$VAULT_INSTANCE_ID"
-      - name: Read the public trust certificate fetched through authenticated SSM
-        id: trust
-        run: |
-          python - <<'PY'
-          import base64, os
-          from pathlib import Path
-          certificate = Path(os.environ['VAULT_CACERT']).read_bytes()
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('ca=' + base64.b64encode(certificate).decode() + '\n')
-          PY
+      - name: Resume only the existing EKS node instances
+        run: python3 scripts/aws/direct_release.py resume-nodes
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1
-      - name: Resolve ECR registry
+      - name: Resolve ECR registry in the connected account
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Verify images and persistent storage driver
-        env:
-          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+      - name: Verify built images and persistent storage
         shell: bash
         run: |
           set -euo pipefail
           aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          kubectl wait --for=condition=Ready nodes --all --timeout=600s
           aws eks describe-addon --cluster-name boutique-eq4-eks --addon-name aws-ebs-csi-driver --query 'addon.status' --output text | grep -qx ACTIVE
           for service in adservice cartservice catalogservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
             aws ecr describe-images --repository-name "boutique-eq4/$service" --image-ids "imageTag=$IMAGE_TAG" >/dev/null
           done
           kubectl get namespace boutique-vault-lab >/dev/null
-          kubectl wait --for=condition=Ready nodes --all --timeout=600s
-      - name: Open SSM tunnel and verify Vault TLS
+      - name: Deploy with the existing Kubernetes application Secret and verify functionality
         env:
-          VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          test -n "$VAULT_INSTANCE_ID" && test -s "$VAULT_CACERT"
-          python scripts/vault/ssm_tunnel.py --instance-id "$VAULT_INSTANCE_ID" --pid-file "$RUNNER_TEMP/vault-tunnel.pid" > "$RUNNER_TEMP/vault-tunnel.log" 2>&1 &
-          python scripts/vault/health.py
-      - name: Read application secrets from Vault
-        id: vault
-        uses: hashicorp/vault-action@v3
-        with:
-          url: https://127.0.0.1:18200
-          method: jwt
-          path: github
-          role: boutique-main
-          jwtGithubAudience: ${{ github.server_url }}/${{ github.repository }}
-          caCertificate: ${{ steps.trust.outputs.ca }}
-          tlsSkipVerify: false
-          exportEnv: false
-          exportToken: false
-          outputToken: false
-          ignoreNotFound: false
-          secrets: secret/data/boutique/lab/integration * | BOUTIQUE_
-      - name: Deliver Secret, migrate, deploy and verify functionality
-        env:
-          DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_DATABASE_URL }}
-          MIGRATION_DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_MIGRATION_DATABASE_URL }}
-          APP_DB_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_APP_DB_PASSWORD }}
-          ADMIN_EMAIL: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_PASSWORD }}
-          ADMIN_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_API_TOKEN }}
-          CATALOG_READ_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CATALOG_READ_TOKEN }}
-          CHECKOUT_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CHECKOUT_API_TOKEN }}
-          POSTGRES_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_POSTGRES_PASSWORD }}
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
-        shell: bash
-        run: python scripts/vault/deploy.py --registry "$ECR_REGISTRY" --image-tag "$IMAGE_TAG" --revision "$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
-      - name: Close remote SSM session and remove temporary trust files
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f "$RUNNER_TEMP/vault-tunnel.pid" ]]; then
-            kill -TERM "$(cat "$RUNNER_TEMP/vault-tunnel.pid")" 2>/dev/null || true
-            for attempt in {1..45}; do
-              [[ ! -f "$RUNNER_TEMP/vault-tunnel.pid" ]] && break
-              sleep 1
-            done
-          fi
-          if [[ -f "$RUNNER_TEMP/vault-tunnel.session" ]]; then
-            aws ssm terminate-session --region us-east-1 --session-id "$(cat "$RUNNER_TEMP/vault-tunnel.session")" >/dev/null
-          fi
-          rm -f "$VAULT_CACERT" "$RUNNER_TEMP/vault-tunnel.pid" "$RUNNER_TEMP/vault-tunnel.session" "$RUNNER_TEMP/vault-tunnel.log"
+        run: >-
+          python3 scripts/aws/direct_release.py deploy
+          --registry "$ECR_REGISTRY" --image-tag "$IMAGE_TAG"
+          --revision "$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"

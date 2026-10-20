@@ -31,18 +31,3 @@ path "sys/generate-root/update" {
 path "sys/rekey/*" {
   capabilities = ["read", "update", "delete", "sudo"]
 }
-path "sys/auth" {
-  capabilities = ["read"]
-}
-path "sys/auth/github" {
-  capabilities = ["create", "update", "sudo"]
-}
-path "auth/github/config" {
-  capabilities = ["create", "read", "update"]
-}
-path "auth/github/role/boutique-main" {
-  capabilities = ["create", "read", "update"]
-}
-path "sys/storage/raft/snapshot" {
-  capabilities = ["read"]
-}

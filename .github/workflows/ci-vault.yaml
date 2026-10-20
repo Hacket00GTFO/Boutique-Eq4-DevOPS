@@ -1,10 +1,10 @@
 name: Vault security and delivery checks
 on:
   pull_request:
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   push:
     branches: [main]
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   workflow_dispatch: {}
   workflow_call:
     inputs:
@@ -39,6 +39,8 @@ jobs:
           echo "VAULT_TEST_BINARY=$RUNNER_TEMP/vault-bin/vault" >> "$GITHUB_ENV"
       - name: Real Vault TLS, KV, ACL, expiration, seal and delivery recovery
         run: python -m unittest discover -s scripts/vault/tests -v
+      - name: Direct AWS account boundary, node recovery and existing application custody
+        run: python -m unittest discover -s scripts/aws/tests -v
       - name: Operations callback privacy and bounded output
         run: python -m unittest discover -s scripts/tests -v
       - name: Validate automation
@@ -48,8 +50,7 @@ jobs:
           ansible-playbook -i 'localhost,' site.yml --syntax-check
           ansible-playbook -i 'localhost,' local-check.yml --syntax-check
           ansible-playbook -i 'localhost,' root-recovery.yml --syntax-check
-          ansible-playbook -i 'localhost,' kms-migration.yml --syntax-check
-          ansible-lint site.yml local-check.yml root-recovery.yml kms-migration.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+          ansible-lint site.yml local-check.yml root-recovery.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1
