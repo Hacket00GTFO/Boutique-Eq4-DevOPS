@@ -48,6 +48,14 @@ def main():
             detail['nodegroups'].append({field: node.get(field) for field in
                                         ('nodegroupName', 'status', 'nodeRole', 'health', 'scalingConfig', 'resources')}
                                        if not result.get('unavailable') else result)
+        detail['addons'] = []
+        addons = query('eks', 'list-addons', '--cluster-name', name)
+        for addon in addons.get('addons', []):
+            result = query('eks', 'describe-addon', '--cluster-name', name, '--addon-name', addon)
+            item = result.get('addon', {})
+            detail['addons'].append({field: item.get(field) for field in
+                                    ('addonName', 'addonVersion', 'status', 'health', 'configurationValues')}
+                                   if not result.get('unavailable') else result)
         report['eks_details'].append(detail)
     instances = query('ec2', 'describe-instances', '--filters', 'Name=tag:Name,Values=boutique-vault-lab')
     report['vault_instances'] = [{'id': item['InstanceId'], 'state': item['State']['Name'],
