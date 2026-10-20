@@ -66,3 +66,26 @@ class FreshKmsInitializationTests(unittest.TestCase):
             self.assertTrue(any(call.args[:2] == ('POST', 'auth/token/revoke-self') for call in root.request.call_args_list))
             oidc.assert_called_once_with(root, data['repo'], data['repository_id'], data['owner_id'])
             self.assertTrue((custody / 'vault-custody.tar.gpg').is_file())
+
+    def test_verified_initialization_can_resume_without_reissuing_root_or_overwriting_values(self):
+        import os
+        data = self.data()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            record = {field: True for field in ('kms_restart_verified', 'tls_verified', 'oidc_configured', 'root_token_revoked')}
+            record.update({field: data[field] for field in ('repo', 'repository_id', 'owner_id')})
+            (path / 'verified.json').write_text(json.dumps(record))
+            (path / 'verified.json').chmod(0o600)
+            (path / 'vault-custody.tar.gpg').write_bytes(b'encrypted custody')
+            vault = Mock()
+            vault.request.return_value = (200, {'initialized': True})
+            with (patch.object(initialize_kms, 'Vault', return_value=vault),
+                  patch.object(initialize_kms, 'runtime') as runtime,
+                  contextlib.redirect_stdout(io.StringIO())):
+                initialize_kms.initialize(data, path)
+            runtime.assert_called_once_with(vault)
+            self.assertEqual(vault.request.call_count, 1)
+            record['repo'] = 'other/project'
+            (path / 'verified.json').write_text(json.dumps(record))
+            with patch.object(initialize_kms, 'Vault', return_value=vault), self.assertRaises(SafeError):
+                initialize_kms.initialize(data, path)

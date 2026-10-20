@@ -42,7 +42,21 @@ def initialize(payload, custody):
         raise SafeError('Three distinct recovery public keys are required.')
     anonymous = Vault()
     if anonymous.request('GET', 'sys/init')[1].get('initialized'):
-        raise SafeError('Vault is already initialized; preserve its custody and data before proceeding.')
+        directory = Path(custody)
+        marker, encrypted = directory / 'verified.json', directory / 'vault-custody.tar.gpg'
+        if (not marker.is_file() or marker.is_symlink() or not encrypted.is_file()
+                or marker.stat().st_uid != os.getuid() or marker.stat().st_mode & 0o077
+                or directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o077):
+            raise SafeError('Vault is already initialized without verified private custody; preserve its data before proceeding.')
+        record = json.loads(marker.read_text())
+        fields = ('kms_restart_verified', 'tls_verified', 'oidc_configured', 'root_token_revoked')
+        if (not all(record.get(field) is True for field in fields)
+                or any(str(record.get(field)) != str(payload[field]) for field in ('repo', 'repository_id', 'owner_id'))):
+            raise SafeError('Existing Vault initialization is not verified for this repository; no data was changed.')
+        await_ready(anonymous)
+        runtime(anonymous)
+        print('PASS: completed native KMS initialization reused; application settings still require comparison before restoration.')
+        return
     seal = anonymous.request('GET', 'sys/seal-status')[1]
     if seal.get('type') != 'awskms' or seal.get('migration'):
         raise SafeError('Initialize only a fresh Vault configured for native AWS KMS.')
@@ -102,7 +116,8 @@ def initialize(payload, custody):
             stream.write(encrypted)
         (custody / 'verified.json').write_text(json.dumps({
             'kms_restart_verified': True, 'tls_verified': True, 'oidc_configured': True,
-            'root_token_revoked': True, 'admin_source': 'accepted local environment'}))
+            'root_token_revoked': True, 'admin_source': 'accepted local environment',
+            **{field: payload[field] for field in ('repo', 'repository_id', 'owner_id')}}))
     print('PASS: native KMS restart, TLS, local admin/settings, restricted OIDC and root-token revocation verified.')
 
 

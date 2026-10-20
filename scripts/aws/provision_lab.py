@@ -99,6 +99,41 @@ def vault_key_in_state():
     return 'aws_kms_key.vault[0]' in tf('vault', 'state', 'list').splitlines()
 
 
+def wait_for_nodes(read=None, sleep=time.sleep, attempts=120):
+    read = read or (lambda: json.loads(command(['kubectl', 'get', 'nodes', '-o', 'json'])))
+    previous = None
+    for _ in range(attempts):
+        nodes = read().get('items', [])
+        ready = [node for node in nodes if any(condition.get('type') == 'Ready' and condition.get('status') == 'True'
+                                               for condition in node.get('status', {}).get('conditions', []))]
+        storage = [node for node in ready if node['metadata'].get('labels', {}).get('boutique.dev/node-purpose') == 'storage-controller']
+        progress = (len(nodes), len(ready), len(storage))
+        if progress != previous:
+            print(f'Node registration: total={progress[0]}, Ready={progress[1]}, storage Ready={progress[2]}.', flush=True)
+            previous = progress
+        if len(ready) >= 3 and storage:
+            return
+        sleep(5)
+    raise PreparationError('EKS workers did not register as Ready with the dedicated storage node; no application data was changed.')
+
+
+def wait_for_addon(cluster, call=aws, sleep=time.sleep, attempts=90):
+    previous = None
+    for _ in range(attempts):
+        addon = call('eks', 'describe-addon', '--cluster-name', cluster, '--addon-name', 'aws-ebs-csi-driver')['addon']
+        status = addon['status']
+        if status != previous:
+            codes = [issue.get('code') for issue in addon.get('health', {}).get('issues', [])]
+            print('EBS CSI status: ' + status + '; health codes: ' + ','.join(codes), flush=True)
+            previous = status
+        if status == 'ACTIVE':
+            return
+        if status in ('CREATE_FAILED', 'DELETE_FAILED', 'DELETING'):
+            raise PreparationError('EBS CSI entered a failed or deleting state; preserve storage and inspect its health.')
+        sleep(10)
+    raise PreparationError('EBS CSI did not become ACTIVE after node recovery; persistent data was retained.')
+
+
 def main():
     os.umask(0o077)
     key = prepare()
@@ -128,6 +163,8 @@ def main():
         raise PreparationError('The created Vault instance did not become available through SSM.')
     print('Resuming only the known EKS/Vault instances after a renewed Lab session.', flush=True)
     command(['python3', 'scripts/vault/resume_lab.py', '--instance-id', instance], timeout=900)
+    command(['aws', 'eks', 'update-kubeconfig', '--name', cluster['cluster_name'], '--region', 'us-east-1'])
+    wait_for_nodes()
     print('Installing the EBS CSI add-on on the dedicated LabRole storage node.', flush=True)
     version = aws('eks', 'describe-addon-versions', '--addon-name', 'aws-ebs-csi-driver',
                   '--kubernetes-version', '1.35')['addons'][0]['addonVersions'][0]['addonVersion']
@@ -136,10 +173,7 @@ def main():
     if 'aws-ebs-csi-driver' not in addons:
         aws('eks', 'create-addon', '--cluster-name', cluster['cluster_name'], '--addon-name', 'aws-ebs-csi-driver',
             '--addon-version', version, '--configuration-values', config)
-    command(['aws', 'eks', 'wait', 'addon-active', '--cluster-name', cluster['cluster_name'],
-             '--addon-name', 'aws-ebs-csi-driver', '--region', 'us-east-1'], timeout=900)
-    command(['aws', 'eks', 'update-kubeconfig', '--name', cluster['cluster_name'], '--region', 'us-east-1'])
-    command(['kubectl', 'wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=300s'])
+    wait_for_addon(cluster['cluster_name'])
     command(['kubectl', 'apply', '-f', 'kubernetes-manifests/aws-ebs-gp3-storageclass.yaml'])
     report = {'account': ACCOUNT, 'region': 'us-east-1', 'cluster_name': cluster['cluster_name'],
               'vault_instance_id': instance, 'vault_kms_key_arn': key, 'state_bucket': STATE_BUCKET,
