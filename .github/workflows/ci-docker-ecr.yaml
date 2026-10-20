@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Development: read-only inventory or prepare the persistent Vault KMS key'
+        description: 'One-time preparation; normal main dispatch builds and deploys the release'
         type: choice
-        options: [inventory, prepare-vault-kms, rebuild-infrastructure]
+        options: [inventory, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
         default: inventory
       existing_kms_key_arn:
         description: 'Resume KMS preparation with an already-created key; never recreate it'
@@ -93,7 +93,142 @@ jobs:
           path: .vault-lab/infrastructure.json
           include-hidden-files: true
           retention-days: 1
+  initialize-local-data:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'initialize-local-data'
+    environment: vault-lab
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
+      VAULT_KMS_KEY_ARN: ${{ vars.VAULT_KMS_KEY_ARN }}
+      ANSIBLE_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
+      VAULT_ADDR: https://127.0.0.1:18200
+      VAULT_CACERT: ${{ github.workspace }}/.vault-lab/certs/${{ vars.VAULT_INSTANCE_ID }}.pem
+      LOCAL_BOOTSTRAP_FILE: ${{ github.workspace }}/.vault-lab/bootstrap/vault-payload.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require the deliberate initial-setup window
+        env:
+          AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
+        run: |
+          test "$AUTOMATION_READY" != true
+          [[ "$VAULT_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]]
+          [[ "$VAULT_KMS_KEY_ARN" =~ ^arn:aws:kms:us-east-1:716142453772:key/[0-9a-f-]{36}$ ]]
+          test -n "$ANSIBLE_SSM_BUCKET"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Verify the exact AWS account
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = 716142453772
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Install the pinned Ansible dependencies and SSM plugin
+        run: |
+          python -m pip install -r ansible/requirements.txt
+          ansible-galaxy collection install -r ansible/requirements.yml
+          bash scripts/vault/install-ssm-plugin.sh
+      - name: Prepare the accepted local backup without logging application settings
+        env:
+          LOCAL_RECOVERY_PAYLOAD: ${{ secrets.LOCAL_RECOVERY_PAYLOAD }}
+        run: python scripts/vault/restore_local.py prepare
+      - name: Install Vault and configure its persistent native KMS seal
+        working-directory: ansible
+        run: |
+          ansible-playbook site.yml --limit "$VAULT_INSTANCE_ID"
+          ansible-playbook kms-migration.yml --limit "$VAULT_INSTANCE_ID" \
+            -e "vault_migration_instance=$VAULT_INSTANCE_ID" -e "vault_kms_key_arn=$VAULT_KMS_KEY_ARN"
+          ansible-playbook initialize-kms.yml --limit "$VAULT_INSTANCE_ID"
+      - name: Load the public certificate obtained through authenticated SSM
+        id: trust
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          certificate = Path(os.environ['VAULT_CACERT']).read_bytes()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('ca=' + base64.b64encode(certificate).decode() + '\n')
+          PY
+      - name: Verify the real KMS restart through the TLS tunnel
+        run: |
+          umask 077
+          python scripts/vault/ssm_tunnel.py --instance-id "$VAULT_INSTANCE_ID" \
+            --pid-file "$RUNNER_TEMP/vault-tunnel.pid" > "$RUNNER_TEMP/vault-tunnel.log" 2>&1 &
+          python scripts/vault/require_automation.py runtime
+      - name: Verify actual GitHub OIDC and read the preserved local application settings
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://127.0.0.1:18200
+          method: jwt
+          path: github
+          role: boutique-main
+          jwtGithubAudience: ${{ github.server_url }}/${{ github.repository }}
+          caCertificate: ${{ steps.trust.outputs.ca }}
+          tlsSkipVerify: false
+          exportEnv: false
+          exportToken: false
+          outputToken: false
+          ignoreNotFound: false
+          secrets: secret/data/boutique/lab/integration * | BOUTIQUE_
+      - name: Restore the accepted PostgreSQL backup and verify the original administrator
+        env:
+          DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_MIGRATION_DATABASE_URL }}
+          APP_DB_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_APP_DB_PASSWORD }}
+          ADMIN_EMAIL: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_PASSWORD }}
+          ADMIN_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_API_TOKEN }}
+          CATALOG_READ_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CATALOG_READ_TOKEN }}
+          CHECKOUT_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CHECKOUT_API_TOKEN }}
+          POSTGRES_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_POSTGRES_PASSWORD }}
+        run: |
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          python scripts/vault/restore_local.py restore
+      - name: Save only encrypted custody and public verification records
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-bootstrap-verification
+          path: |
+            .vault-lab/bootstrap/vault-custody.tar.gpg
+            .vault-lab/bootstrap/vault-verified.json
+            .vault-lab/bootstrap/database-verified.json
+          include-hidden-files: true
+          retention-days: 3
+      - name: Close SSM and remove the one-time private inputs
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.pid" ]]; then
+            kill -TERM "$(cat "$RUNNER_TEMP/vault-tunnel.pid")" 2>/dev/null || true
+            for attempt in {1..45}; do
+              [[ ! -f "$RUNNER_TEMP/vault-tunnel.pid" ]] && break
+              sleep 1
+            done
+          fi
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.session" ]]; then
+            aws ssm terminate-session --region us-east-1 --session-id "$(cat "$RUNNER_TEMP/vault-tunnel.session")" >/dev/null
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('local-payload.json', 'vault-payload.json'):
+              (Path('.vault-lab/bootstrap') / name).unlink(missing_ok=True)
+          PY
   release:
+    if: inputs.operation != 'initialize-local-data'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:

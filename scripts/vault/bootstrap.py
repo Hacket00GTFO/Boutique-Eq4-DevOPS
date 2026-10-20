@@ -23,6 +23,26 @@ def seed_values():
     })
 
 
+def configure_base(vault):
+    mounts = vault.request('GET', 'sys/mounts')[1]['data']
+    if 'secret/' not in mounts:
+        vault.request('POST', 'sys/mounts/secret', {'type': 'kv', 'options': {'version': '2'}})
+    elif mounts['secret/']['type'] != 'kv' or mounts['secret/'].get('options', {}).get('version') != '2':
+        raise SafeError('Existing secret mount is not KV v2; refusing an implicit migration.')
+    audits = vault.request('GET', 'sys/audit')[1]['data']
+    if 'file/' not in audits:
+        vault.request('PUT', 'sys/audit/file', {'type': 'file', 'options': {
+            'file_path': '/var/log/vault/audit.json', 'log_raw': 'false'}})
+    elif audits['file/'].get('options', {}).get('log_raw', 'false') != 'false':
+        raise SafeError('Existing audit device logs raw secrets; disable raw logging before proceeding.')
+    for name in ('boutique-ci', 'boutique-operator'):
+        vault.request('PUT', 'sys/policies/acl/' + name, {'policy': (POLICIES / (name + '.hcl')).read_text()})
+    vault.request('POST', 'auth/token/roles/boutique-ci', {
+        'allowed_policies': ['boutique-ci'], 'orphan': True, 'renewable': False,
+        'token_explicit_max_ttl': 14400, 'token_no_default_policy': True,
+    })
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -66,22 +86,7 @@ def main():
         return
     vault.authenticate().ready()
     if args.command == 'configure':
-        mounts = vault.request('GET', 'sys/mounts')[1]['data']
-        if 'secret/' not in mounts:
-            vault.request('POST', 'sys/mounts/secret', {'type': 'kv', 'options': {'version': '2'}})
-        elif mounts['secret/']['type'] != 'kv' or mounts['secret/'].get('options', {}).get('version') != '2':
-            raise SafeError('Existing secret mount is not KV v2; refusing an implicit migration.')
-        audits = vault.request('GET', 'sys/audit')[1]['data']
-        if 'file/' not in audits:
-            vault.request('PUT', 'sys/audit/file', {'type': 'file', 'options': {'file_path': '/var/log/vault/audit.json', 'log_raw': 'false'}})
-        elif audits['file/'].get('options', {}).get('log_raw', 'false') != 'false':
-            raise SafeError('Existing audit device logs raw secrets; disable raw logging before proceeding.')
-        for name in ('boutique-ci', 'boutique-operator'):
-            vault.request('PUT', 'sys/policies/acl/' + name, {'policy': (POLICIES / (name + '.hcl')).read_text()})
-        vault.request('POST', 'auth/token/roles/boutique-ci', {
-            'allowed_policies': ['boutique-ci'], 'orphan': True, 'renewable': False,
-            'token_explicit_max_ttl': 14400, 'token_no_default_policy': True,
-        })
+        configure_base(vault)
         print('KV v2, audit and policies configured; no application values were printed.')
     elif args.command == 'seed':
         if args.env_file and args.rotate_api_tokens:

@@ -2,12 +2,23 @@
 
 ## Recuperación pendiente antes de activar
 
-La cuenta `716142453772` ya no conserva EKS, la EC2 de Vault ni los buckets
-anteriores. El [informe de recuperación](recovery-2026-10-20.md) distingue los
-datos locales verificados de los pedidos de AWS aún no recuperados. No usar una
-base vacía como sustituto de esa recuperación. Los identificadores de EC2 de los
-ejemplos corresponden a la instalación anterior; obtener los nuevos del estado
-recuperado antes de aplicar los pasos de preparación.
+La instalación anterior fue eliminada. El usuario aceptó reconstruir usando
+los nueve productos de la copia local y su administrador de `.env`, sin los
+pedidos anteriores de AWS. El [informe de recuperación](recovery-2026-10-20.md)
+registra esta decisión y sus límites. Los bloqueos siguen activos hasta
+verificar la restauración real y KMS/OIDC/TLS en la instalación nueva. Los
+identificadores de los ejemplos históricos corresponden a la instalación
+anterior; obtener los nuevos del estado reconstruido.
+
+La preparación manual del workflow ofrece `prepare-vault-kms` y
+`rebuild-infrastructure` sobre `development`. Esta última conserva la clave,
+usa buckets privados y planes que rechazan borrados/sustituciones. Después,
+`initialize-local-data` se ejecuta únicamente sobre `main` en `vault-lab`:
+Ansible inicializa el Vault nuevo con KMS, cifra la custodia para los custodios
+2 y 3, configura OIDC y revoca el token raíz en la propia EC2. GitHub comprueba
+OIDC y restaura el dump aceptado antes de habilitar el release normal. El
+token raíz no llega al runner. El secret temporal `LOCAL_RECOVERY_PAYLOAD`
+se elimina tras descargar la custodia cifrada y verificar la restauración.
 
 La ruta es **AWS Academy Learner Lab**. Una vez terminada la preparación inicial,
 la renovación de una sesión requiere actualizar únicamente estos **repository

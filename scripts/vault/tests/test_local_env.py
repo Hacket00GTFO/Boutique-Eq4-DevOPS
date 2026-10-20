@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SafeError
-from local_env import integration_values
+from local_env import integration_values, verify_admin
 
 
 class LocalEnvironmentTests(unittest.TestCase):
@@ -46,3 +46,15 @@ class LocalEnvironmentTests(unittest.TestCase):
                       'MIGRATION_DATABASE_URL="unterminated\n'):
             with self.subTest(kind='invalid'), self.assertRaises(SafeError):
                 self.read(self.values(extra))
+
+    def test_inactive_wrong_password_or_non_admin_accounts_are_rejected(self):
+        import hashlib
+        values = self.read(self.values())
+        digest = hashlib.pbkdf2_hmac('sha256', values['ADMIN_PASSWORD'].encode(), b'test-salt', 1000).hex()
+        user = {'email': values['ADMIN_EMAIL'], 'active': True, 'role': 'admin',
+                'password_hash': 'pbkdf2:sha256:1000$test-salt$' + digest}
+        verify_admin(values, [user])
+        for replacement in ({'active': False}, {'role': 'viewer'}, {'email': 'other@example.invalid'},
+                            {'password_hash': 'pbkdf2:sha256:1000$test-salt$incorrect'}):
+            with self.subTest(kind=list(replacement)), self.assertRaises(SafeError):
+                verify_admin(values, [dict(user, **replacement)])
