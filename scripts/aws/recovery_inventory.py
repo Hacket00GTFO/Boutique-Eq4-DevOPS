@@ -7,7 +7,7 @@ import sys
 ACCOUNT = '716142453772'
 
 
-def kubernetes_inventory(name):
+def kubernetes_inventory(name, roles=()):
     def execute(args):
         result = subprocess.run(args, capture_output=True, text=True, timeout=45, check=False)
         if result.returncode:
@@ -38,7 +38,12 @@ def kubernetes_inventory(name):
                                  for container in item.get('status', {}).get('containerStatuses', [])
                                  if container.get('state', {}).get('waiting')]}
             for item in json.loads(response['output']).get('items', [])]
-    return {'nodes': nodes, 'system_pods': pods}
+    response = execute(['kubectl', '-n', 'kube-system', 'get', 'configmap', 'aws-auth', '-o', 'json', '--request-timeout=30s'])
+    auth = response if response.get('unavailable') else {
+        'present': True,
+        'expected_roles_mapped': {role: role in json.loads(response['output']).get('data', {}).get('mapRoles', '')
+                                  for role in roles}}
+    return {'nodes': nodes, 'system_pods': pods, 'node_auth_mapping': auth}
 
 
 def query(*args):
@@ -73,7 +78,7 @@ def main():
     for name in clusters.get('clusters', []):
         result = query('eks', 'describe-cluster', '--name', name)
         cluster = result.get('cluster', {})
-        detail = {field: cluster.get(field) for field in ('name', 'status', 'version', 'health')}
+        detail = {field: cluster.get(field) for field in ('name', 'status', 'version', 'health', 'accessConfig')}
         groups = query('eks', 'list-nodegroups', '--cluster-name', name)
         detail['nodegroups'] = []
         for group in groups.get('nodegroups', []):
@@ -82,6 +87,18 @@ def main():
             detail['nodegroups'].append({field: node.get(field) for field in
                                         ('nodegroupName', 'status', 'nodeRole', 'health', 'scalingConfig', 'resources')}
                                        if not result.get('unavailable') else result)
+            ids = []
+            for group_info in node.get('resources', {}).get('autoScalingGroups', []):
+                scaling = query('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', group_info['name'])
+                ids += [instance['InstanceId'] for item in scaling.get('AutoScalingGroups', []) for instance in item.get('Instances', [])]
+            if ids:
+                machines = query('ec2', 'describe-instances', '--instance-ids', *ids)
+                detail['nodegroups'][-1]['instances'] = [{field: machine.get(field) for field in
+                    ('InstanceId', 'State', 'PrivateIpAddress', 'PublicIpAddress', 'IamInstanceProfile', 'ImageId')}
+                    for reservation in machines.get('Reservations', []) for machine in reservation['Instances']]
+                managed = query('ssm', 'describe-instance-information', '--filters', 'Key=InstanceIds,Values=' + ','.join(ids))
+                detail['nodegroups'][-1]['ssm'] = [{field: machine.get(field) for field in ('InstanceId', 'PingStatus', 'PlatformName')}
+                                                  for machine in managed.get('InstanceInformationList', [])]
         detail['addons'] = []
         addons = query('eks', 'list-addons', '--cluster-name', name)
         for addon in addons.get('addons', []):
@@ -91,7 +108,7 @@ def main():
                                     ('addonName', 'addonVersion', 'status', 'health', 'configurationValues')}
                                    if not result.get('unavailable') else result)
         if name == 'boutique-eq4-eks' and cluster.get('status') == 'ACTIVE':
-            detail['kubernetes'] = kubernetes_inventory(name)
+            detail['kubernetes'] = kubernetes_inventory(name, [item['nodeRole'] for item in detail['nodegroups'] if item.get('nodeRole')])
         report['eks_details'].append(detail)
     instances = query('ec2', 'describe-instances', '--filters', 'Name=tag:Name,Values=boutique-vault-lab')
     report['vault_instances'] = [{'id': item['InstanceId'], 'state': item['State']['Name'],
