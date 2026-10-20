@@ -113,15 +113,18 @@ def main():
     if identity.get('Account') != args.expected_account:
         raise SafeError('The active AWS account does not match the expected lab account.')
     # STS identity still works for some cancelled Lab sessions; require a real service permission.
-    command(['aws', 'eks', 'describe-cluster', '--name', 'boutique-eq4-eks',
-             '--region', 'us-east-1', '--no-cli-pager'])
+    if args.rotate_aws_only:
+        command(['aws', 'eks', 'list-clusters', '--region', 'us-east-1', '--no-cli-pager'])
+    else:
+        command(['aws', 'eks', 'describe-cluster', '--name', 'boutique-eq4-eks',
+                 '--region', 'us-east-1', '--no-cli-pager'])
     repository = api(args.repo)
     if not repository.get('permissions', {}).get('admin'):
         raise SafeError('GitHub environment configuration requires repository admin access.')
     if args.rotate_aws_only:
         rotate_credentials(args.repo, credentials)
         print('PASS: all three repository AWS secrets updated; stale environment overrides removed.')
-        print('Merge development into main to build and deploy automatically; no Vault CI token is required.')
+        print('Main releases still require verified infrastructure, data and Vault/KMS/OIDC/TLS preparation.')
         return
     if (not re.fullmatch(r'i-[0-9a-f]{8,17}', args.instance_id or '')
             or not re.fullmatch(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', args.ssm_bucket or '')

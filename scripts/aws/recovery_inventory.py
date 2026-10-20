@@ -12,8 +12,20 @@ def query(*args):
                             capture_output=True, text=True, timeout=90, check=False)
     if result.returncode:
         error = re.search(r'An error occurred \(([A-Za-z0-9_.-]+)\)', result.stderr)
-        return {'unavailable': True, 'error_code': error.group(1) if error else 'request_failed'}
+        failure = {'unavailable': True, 'error_code': error.group(1) if error else 'request_failed'}
+        if 'voc-cancel-cred' in result.stderr:
+            failure['session_cancelled'] = True
+        return failure
     return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def finish(report):
+    print(json.dumps(report, indent=2))
+    eks = report.get('eks', {})
+    if isinstance(eks, dict) and eks.get('unavailable'):
+        if eks.get('session_cancelled'):
+            sys.exit('Recovery inventory blocked: start the Learner Lab and update all three AWS repository secrets.')
+        sys.exit('Recovery inventory incomplete: EKS access was denied or unavailable. Check the active Lab session and permissions.')
 
 
 def main():
@@ -23,6 +35,20 @@ def main():
     report = {'account': ACCOUNT, 'region': 'us-east-1'}
     clusters = query('eks', 'list-clusters')
     report['eks'] = clusters.get('clusters', clusters)
+    report['eks_details'] = []
+    for name in clusters.get('clusters', []):
+        result = query('eks', 'describe-cluster', '--name', name)
+        cluster = result.get('cluster', {})
+        detail = {field: cluster.get(field) for field in ('name', 'status', 'version', 'health')}
+        groups = query('eks', 'list-nodegroups', '--cluster-name', name)
+        detail['nodegroups'] = []
+        for group in groups.get('nodegroups', []):
+            result = query('eks', 'describe-nodegroup', '--cluster-name', name, '--nodegroup-name', group)
+            node = result.get('nodegroup', {})
+            detail['nodegroups'].append({field: node.get(field) for field in
+                                        ('nodegroupName', 'status', 'nodeRole', 'health', 'scalingConfig', 'resources')}
+                                       if not result.get('unavailable') else result)
+        report['eks_details'].append(detail)
     instances = query('ec2', 'describe-instances', '--filters', 'Name=tag:Name,Values=boutique-vault-lab')
     report['vault_instances'] = [{'id': item['InstanceId'], 'state': item['State']['Name'],
                                   'volumes': [mapping.get('Ebs', {}).get('VolumeId')
@@ -62,7 +88,7 @@ def main():
         role_result = query('iam', 'get-role', '--role-name', role_name)
         if role_result.get('unavailable'):
             report['kms_permissions_advisory'] = role_result
-            print(json.dumps(report, indent=2))
+            finish(report)
             return
         role = role_result['Role']['Arn']
         permissions = query('iam', 'simulate-principal-policy', '--policy-source-arn', role,
@@ -73,7 +99,7 @@ def main():
             for item in permissions.get('EvaluationResults', [])] if not permissions.get('unavailable') else permissions
     except (KeyError, IndexError):
         report['kms_permissions_advisory'] = {'unavailable': True}
-    print(json.dumps(report, indent=2))
+    finish(report)
 
 
 if __name__ == '__main__':
