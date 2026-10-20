@@ -1,10 +1,11 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_vault_kms import PreparationError
-from provision_lab import check_plan
+from provision_lab import check_plan, vault_key_in_state
 
 
 class InfrastructurePlanTests(unittest.TestCase):
@@ -27,3 +28,19 @@ class InfrastructurePlanTests(unittest.TestCase):
     def test_owned_additions_and_no_changes_are_accepted(self):
         self.assertEqual(check_plan(self.plan('aws_eks_cluster', ['create']), 'key'), 1)
         self.assertEqual(check_plan(self.plan('aws_instance', ['no-op']), 'key'), 0)
+
+    def test_fresh_vault_backend_does_not_require_an_existing_state_file(self):
+        for response in ({}, {'Contents': [{'Key': 'modulo-vault/terraform.tfstate.tflock'}]}):
+            with (self.subTest(response=response), patch('provision_lab.aws', return_value=response),
+                  patch('provision_lab.tf') as tf):
+                self.assertFalse(vault_key_in_state())
+                tf.assert_not_called()
+
+    def test_existing_key_is_recognized_and_denied_state_is_not_treated_as_empty(self):
+        with (patch('provision_lab.aws', return_value={'Contents': [{'Key': 'modulo-vault/terraform.tfstate'}]}),
+              patch('provision_lab.tf', return_value='aws_kms_key.vault[0]\n')):
+            self.assertTrue(vault_key_in_state())
+        with (patch('provision_lab.aws', side_effect=PreparationError('Access denied')),
+              patch('provision_lab.tf') as tf, self.assertRaises(PreparationError)):
+            vault_key_in_state()
+        tf.assert_not_called()
