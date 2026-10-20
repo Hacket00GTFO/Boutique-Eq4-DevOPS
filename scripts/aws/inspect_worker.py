@@ -1,5 +1,8 @@
 """Read startup diagnostics through SSM from the one owned EKS storage worker."""
 import json
+import argparse
+import re
+import subprocess
 import sys
 import time
 
@@ -33,7 +36,42 @@ print(json.dumps(result))
 '''
 
 
-def main():
+def restart_unjoined_workers(report, call=aws, execute=subprocess.run):
+    startup = report['startup']
+    if not startup.get('current_ec2_permission', {}).get('describe_allowed') or startup['nodeadm-config']['state'] != 'failed':
+        raise PreparationError('Recover startup only after the previous denial is resolved and nodeadm is failed.')
+    def local(args):
+        result = execute(args, capture_output=True, text=True, timeout=60, check=False)
+        if result.returncode:
+            raise PreparationError('Cannot verify the empty cluster before worker recovery.')
+        return result.stdout
+    local(['aws', 'eks', 'update-kubeconfig', '--name', 'boutique-eq4-eks', '--region', 'us-east-1'])
+    if json.loads(local(['kubectl', 'get', 'nodes', '-o', 'json'])).get('items'):
+        raise PreparationError('Workers have joined the cluster; use the controlled workload maintenance procedure.')
+    if local(['kubectl', 'get', 'namespace', 'boutique-vault-lab', '--ignore-not-found', '-o', 'json']).strip():
+        raise PreparationError('Application namespace exists; do not reboot its workers automatically.')
+    ids = set()
+    for suffix in ('nodes', 'storage'):
+        node = call('eks', 'describe-nodegroup', '--cluster-name', 'boutique-eq4-eks',
+                    '--nodegroup-name', 'boutique-eq4-eks-' + suffix)['nodegroup']
+        role = node['nodeRole']
+        if (suffix == 'storage' and role != f'arn:aws:iam::{ACCOUNT}:role/LabRole') or (
+                suffix == 'nodes' and not re.fullmatch(f'arn:aws:iam::{ACCOUNT}:role/.*-LabEksNodeRole-.*', role)):
+            raise PreparationError('An expected worker role changed; recovery stopped.')
+        for group in node['resources']['autoScalingGroups']:
+            scaling = call('autoscaling', 'describe-auto-scaling-groups', '--auto-scaling-group-names', group['name'])
+            ids.update(item['InstanceId'] for entry in scaling['AutoScalingGroups'] for item in entry['Instances'])
+    if len(ids) != 3 or report['instance'] not in ids:
+        raise PreparationError('Recover exactly the three known workers, including the inspected storage node.')
+    machines = call('ec2', 'describe-instances', '--instance-ids', *sorted(ids))
+    actual = [item for entry in machines['Reservations'] for item in entry['Instances']]
+    if {item['InstanceId'] for item in actual} != ids or any(item['State']['Name'] != 'running' for item in actual):
+        raise PreparationError('Worker identity/state changed; no reboot requested.')
+    call('ec2', 'reboot-instances', '--instance-ids', *sorted(ids))
+    print('PASS: reboot requested for the three owned unjoined workers; all volumes and Vault were retained.')
+
+
+def main(restart=False):
     if aws('sts', 'get-caller-identity')['Account'] != ACCOUNT:
         raise PreparationError('Worker inspection requires the configured account.')
     node = aws('eks', 'describe-nodegroup', '--cluster-name', 'boutique-eq4-eks',
@@ -64,7 +102,10 @@ def main():
             time.sleep(2)
             continue
         if result['Status'] == 'Success':
-            print(json.dumps({'instance': target, 'startup': json.loads(result['StandardOutputContent'])}, indent=2))
+            report = {'instance': target, 'startup': json.loads(result['StandardOutputContent'])}
+            print(json.dumps(report, indent=2))
+            if restart:
+                restart_unjoined_workers(report)
             return
         if result['Status'] in ('Failed', 'Cancelled', 'TimedOut'):
             raise PreparationError('The read-only startup probe failed; private command output suppressed.')
@@ -73,8 +114,10 @@ def main():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--restart-unjoined-workers', action='store_true')
     try:
-        main()
+        main(parser.parse_args().restart_unjoined_workers)
     except PreparationError as error:
         sys.exit('Worker inspection stopped: ' + str(error))
     except (OSError, ValueError, KeyError):

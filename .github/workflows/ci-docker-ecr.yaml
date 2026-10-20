@@ -9,7 +9,7 @@ on:
       operation:
         description: 'One-time preparation; normal main dispatch builds and deploys the release'
         type: choice
-        options: [inventory, inspect-worker, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
+        options: [inventory, inspect-worker, worker-restart, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
         default: inventory
       existing_kms_key_arn:
         description: 'Resume KMS preparation with an already-created key; never recreate it'
@@ -45,7 +45,7 @@ jobs:
       - name: Inspect retained backups and KMS permissions without changing resources
         run: python3 scripts/aws/recovery_inventory.py
   inspect-worker:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'inspect-worker'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && (inputs.operation == 'inspect-worker' || inputs.operation == 'worker-restart')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -58,8 +58,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-      - name: Read startup services on the single known storage worker through SSM
-        run: python3 scripts/aws/inspect_worker.py
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Inspect startup or recover only the known unjoined workers
+        env:
+          WORKER_OPERATION: ${{ inputs.operation }}
+        run: |
+          if [[ "$WORKER_OPERATION" == worker-restart ]]; then
+            python3 scripts/aws/inspect_worker.py --restart-unjoined-workers
+          else
+            python3 scripts/aws/inspect_worker.py
+          fi
   prepare-vault-kms:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'prepare-vault-kms'
     runs-on: ubuntu-24.04
@@ -247,7 +257,7 @@ jobs:
               (Path('.vault-lab/bootstrap') / name).unlink(missing_ok=True)
           PY
   release:
-    if: inputs.operation != 'initialize-local-data' && inputs.operation != 'inspect-worker'
+    if: inputs.operation != 'initialize-local-data' && inputs.operation != 'inspect-worker' && inputs.operation != 'worker-restart'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
