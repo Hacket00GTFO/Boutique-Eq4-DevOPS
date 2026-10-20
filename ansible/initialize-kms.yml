@@ -11,7 +11,8 @@
           - lookup('ansible.builtin.env', 'LOCAL_BOOTSTRAP_FILE') | length > 0
     - name: Install public-key encryption support
       ansible.builtin.dnf:
-        name: gnupg2
+        name: gnupg2-full
+        allowerasing: true
         state: present
     - name: Reserve a root-only temporary initialization directory
       ansible.builtin.tempfile:

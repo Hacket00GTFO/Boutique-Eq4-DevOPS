@@ -21,7 +21,8 @@ def command(args, timeout=1800):
         errors = [line.strip() for line in combined.splitlines()
                   if 'Error:' in line or 'AccessDenied' in line or 'Unauthorized' in line]
         print('\n'.join(errors[:8]), flush=True)
-        raise PreparationError('Infrastructure command failed; state and existing resources were retained.')
+        operation = ' '.join(args[:3])
+        raise PreparationError(f'Infrastructure command failed ({operation}); state and existing resources were retained.')
     return result.stdout
 
 
@@ -88,6 +89,16 @@ def apply(stack, key):
     return {name: value['value'] for name, value in json.loads(tf(stack, 'output', '-json')).items()}
 
 
+def vault_key_in_state():
+    # A fresh remote backend legitimately has no state yet. Never classify an
+    # access-denied response as empty state or silently re-import an existing key.
+    key = 'modulo-vault/terraform.tfstate'
+    objects = aws('s3api', 'list-objects-v2', '--bucket', STATE_BUCKET, '--prefix', key)
+    if not any(item.get('Key') == key for item in objects.get('Contents', [])):
+        return False
+    return 'aws_kms_key.vault[0]' in tf('vault', 'state', 'list').splitlines()
+
+
 def main():
     os.umask(0o077)
     key = prepare()
@@ -103,8 +114,7 @@ def main():
     variables = {'vpc_id': cluster['vpc_id'], 'subnet_id': cluster['vault_subnet_id'],
                  'admin_cidrs': ['127.0.0.1/32'], 'enable_auto_unseal': True}
     (ROOT / 'terraform/aws/vault/terraform.tfvars.json').write_text(json.dumps(variables))
-    state = tf('vault', 'state', 'list')
-    if 'aws_kms_key.vault[0]' not in state.splitlines():
+    if not vault_key_in_state():
         tf('vault', 'import', '-input=false', 'aws_kms_key.vault[0]', key)
     print('Planning and provisioning the independent Vault instance using the persistent KMS key.', flush=True)
     vault = apply('vault', key)
@@ -116,6 +126,8 @@ def main():
         time.sleep(5)
     else:
         raise PreparationError('The created Vault instance did not become available through SSM.')
+    print('Resuming only the known EKS/Vault instances after a renewed Lab session.', flush=True)
+    command(['python3', 'scripts/vault/resume_lab.py', '--instance-id', instance], timeout=900)
     print('Installing the EBS CSI add-on on the dedicated LabRole storage node.', flush=True)
     version = aws('eks', 'describe-addon-versions', '--addon-name', 'aws-ebs-csi-driver',
                   '--kubernetes-version', '1.35')['addons'][0]['addonVersions'][0]['addonVersion']
