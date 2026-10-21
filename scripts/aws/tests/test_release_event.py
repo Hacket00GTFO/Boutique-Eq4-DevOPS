@@ -41,8 +41,12 @@ class ReleaseEventTests(unittest.TestCase):
     def test_manual_main_release_and_development_inventory_are_separate(self):
         def forbidden(*_):
             raise AssertionError('Manual runs do not query PR metadata.')
-        self.assertTrue(authorize('workflow_dispatch', 'refs/heads/main', SHA, REPO, {}, forbidden)[0])
+        self.assertTrue(authorize('workflow_dispatch', 'refs/heads/main', SHA, REPO,
+                                  {'inputs': {'operation': 'release'}}, forbidden)[0])
         self.assertFalse(authorize('workflow_dispatch', 'refs/heads/development', SHA, REPO, {}, forbidden)[0])
+        for operation in ('inventory', 'initialize-local-data', 'prepare-vault-kms', 'rebuild-infrastructure', ''):
+            self.assertFalse(authorize('workflow_dispatch', 'refs/heads/main', SHA, REPO,
+                                       {'inputs': {'operation': operation}}, forbidden)[0])
 
     def test_deleted_main_and_unknown_events_cannot_release(self):
         self.assertFalse(authorize('push', 'refs/heads/main', SHA, REPO, {'deleted': True}, lambda *_: [PR])[0])
