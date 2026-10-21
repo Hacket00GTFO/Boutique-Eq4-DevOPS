@@ -1,4 +1,5 @@
 """Fail-closed validation and transaction recovery without cloud credentials."""
+import ast
 import base64
 import contextlib
 import io
@@ -8,7 +9,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bootstrap import seed_values
@@ -25,14 +27,32 @@ class Cluster:
         self.previous = deploy.secret_manifest(values) if values else None
         self.installed, self.pvcs, self.fail_upgrade = installed, pvcs, fail_upgrade
         self.commands, self.writes = [], []
+        self.storage = [{'metadata': {'name': 'boutique-ebs-gp3'},
+                         'provisioner': 'ebs.csi.aws.com', 'volumeBindingMode': 'WaitForFirstConsumer'}]
+        self.csi = True
 
     def run(self, args, payload=None, timeout=90):
         self.commands.append(args)
         words = ' '.join(args)
         if 'get storageclass' in words:
-            return json.dumps({'items': [{'metadata': {'annotations': {'storageclass.kubernetes.io/is-default-class': 'true'}}}]})
+            return json.dumps({'items': self.storage})
+        if 'get csidriver' in words:
+            if not self.csi:
+                raise SafeError('EBS CSI is not registered')
+            return json.dumps({'metadata': {'name': 'ebs.csi.aws.com'}})
         if 'get secret' in words:
             return json.dumps(self.previous) if self.previous else ''
+        if 'get configmap local-recovery-verified' in words:
+            return json.dumps({'data': {'dump_sha256': 'a' * 64, 'admin_env_verified': 'true',
+                                       'pvc_uid': 'claim-1', 'volume_name': 'pv-1', 'volume_handle': 'vol-1'}})
+        if 'get pvc data-postgres-0' in words:
+            return json.dumps({'metadata': {'uid': 'claim-1'}, 'status': {'phase': 'Bound'},
+                               'spec': {'storageClassName': 'boutique-ebs-gp3', 'volumeName': 'pv-1'}})
+        if 'get pv pv-1' in words:
+            return json.dumps({'spec': {'claimRef': {'uid': 'claim-1'},
+                                       'csi': {'driver': 'ebs.csi.aws.com', 'volumeHandle': 'vol-1'}}})
+        if 'psql' in args:
+            return 'true\n'
         if 'get pvc' in words:
             return json.dumps({'items': [{'metadata': {'name': 'data'}}] if self.pvcs else []})
         if args[:2] == ['helm', 'list']:
@@ -124,7 +144,32 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(cluster.writes[0]['data']['ADMIN_API_TOKEN']).decode(), new['ADMIN_API_TOKEN'])
         upgrade = next(a for a in cluster.commands if a[:2] == ['helm', 'upgrade'])
         self.assertIn('postgresIntegration.rolloutRevision=123.2', upgrade)
+        self.assertIn('postgresIntegration.database.storageClassName=boutique-ebs-gp3', upgrade)
         self.assertNotIn(new['ADMIN_API_TOKEN'], ' '.join(' '.join(c) for c in cluster.commands))
+
+    def test_default_class_does_not_replace_the_explicit_lab_class(self):
+        cluster = Cluster(installed=False)
+        cluster.storage = [{'metadata': {'name': 'gp2', 'annotations': {
+            'storageclass.kubernetes.io/is-default-class': 'true'}},
+            'provisioner': 'kubernetes.io/aws-ebs'}]
+        with patch.object(deploy, 'run', cluster.run), self.assertRaisesRegex(SafeError, 'boutique-ebs-gp3'):
+            deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+        self.assertEqual(cluster.writes, [])
+
+    def test_incompatible_lab_storage_fails_before_writing_secrets(self):
+        for change in ({'provisioner': 'other.driver'}, {'volumeBindingMode': 'Immediate'}):
+            cluster = Cluster(installed=False)
+            cluster.storage[0].update(change)
+            with self.subTest(change=change), patch.object(deploy, 'run', cluster.run), self.assertRaises(SafeError):
+                deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+            self.assertEqual(cluster.writes, [])
+
+    def test_missing_ebs_csi_fails_before_writing_secrets(self):
+        cluster = Cluster(installed=False)
+        cluster.csi = False
+        with patch.object(deploy, 'run', cluster.run), self.assertRaisesRegex(SafeError, 'CSI'):
+            deploy.deploy(seed_values(), REGISTRY, SHA, '1.1')
+        self.assertEqual(cluster.writes, [])
 
     def test_helm_failure_restores_secret_and_recovers_consumers(self):
         old = seed_values()
@@ -171,8 +216,28 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(deploy, 'kubectl', return_value='{"passed": 30}') as kubectl:
             deploy.smoke(values)
         payload = json.loads(kubectl.call_args.kwargs['payload'])
-        self.assertEqual(set(payload['env']), {'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN'})
+        self.assertEqual(set(payload['env']), {'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN', 'STOREFRONT_TEST_URL'})
+        self.assertEqual(payload['env']['STOREFRONT_TEST_URL'], 'http://frontend:80')
         self.assertNotIn(values['POSTGRES_PASSWORD'], json.dumps(payload))
+
+    def test_functional_http_probe_uses_the_deployment_service_port(self):
+        # Exercise the actual suite's HTTP request function without running its mutations.
+        source = Path(deploy.__file__).resolve().parents[1] / 'test-storefront-integration.py'
+        request_function = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body
+                                if isinstance(node, ast.FunctionDef) and node.name == 'request')
+        client = Mock()
+        namespace = {'os': os, 'json': json, 'urllib': urllib, 'client': client, 'jar': []}
+        exec(compile(ast.Module(body=[request_function], type_ignores=[]), str(source), 'exec'), namespace)
+        for configured, expected in ((None, 'http://frontend:8080'), ('http://frontend:80', 'http://frontend:80')):
+            with self.subTest(configured=configured), patch.dict(os.environ):
+                os.environ.pop('STOREFRONT_TEST_URL', None)
+                if configured:
+                    os.environ['STOREFRONT_TEST_URL'] = configured
+                response = io.BytesIO(b'healthy')
+                response.code, response.url = 200, expected + '/_readyz'
+                client.open.return_value = response
+                namespace['request']('/_readyz')
+                self.assertEqual(client.open.call_args.args[0].full_url, expected + '/_readyz')
 
     def test_restore_drops_stale_identity_fields(self):
         previous = deploy.secret_manifest(seed_values())

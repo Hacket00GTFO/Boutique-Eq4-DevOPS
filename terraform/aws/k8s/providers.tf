@@ -23,10 +23,20 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
-# En Learner Lab no se pueden crear roles IAM nuevos: reusamos el rol que ya
-# existe en la cuenta (LabRole) tanto para el cluster EKS como para los
-# nodos. Si el trust policy de LabRole no incluye eks.amazonaws.com y/o
-# ec2.amazonaws.com, esto va a fallar al aplicar y hay que ajustarlo.
-data "aws_iam_role" "lab_role" {
+# Learner Lab aprovisiona roles EKS distintos con prefijos/sufijos propios de
+# cada cuenta. EKS no permite usar el rol del cluster tambien para los nodos.
+# one() falla si hay varios candidatos; sin ninguno, role_arn queda invalido.
+data "aws_iam_roles" "eks_cluster" {
+  name_regex = ".*-LabEksClusterRole-.*"
+}
+
+data "aws_iam_roles" "eks_nodes" {
+  name_regex = ".*-LabEksNodeRole-.*"
+}
+
+# Learner Lab no permite adjuntar políticas al rol de nodos ni crear un rol
+# para EBS CSI. LabRole ya tiene los permisos EC2 necesarios y confía en EC2.
+# Se usa solo en un grupo aislado para el controlador de almacenamiento.
+data "aws_iam_role" "lab_storage" {
   name = "LabRole"
 }

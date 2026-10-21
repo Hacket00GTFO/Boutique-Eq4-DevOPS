@@ -25,7 +25,8 @@ def main():
         for app in ('frontend', 'catalogservice', 'checkoutservice', 'productcatalogservice'):
             deployment = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == app)
             assert deployment['spec']['template']['metadata']['annotations']['boutique.dev/secret-revision'] == revision
-        assert any(d['kind'] == 'StatefulSet' and d['metadata']['name'] == 'postgres' for d in docs)
+        postgres = next(d for d in docs if d['kind'] == 'StatefulSet' and d['metadata']['name'] == 'postgres')
+        assert postgres['spec']['volumeClaimTemplates'][0]['spec']['storageClassName'] == 'boutique-ebs-gp3'
         assert all(d['metadata'].get('namespace') == 'boutique-vault-lab' for d in docs)
         assert not any(d['kind'] == 'Secret' and d['metadata']['name'] == 'boutique-integration' for d in docs), 'Helm must never persist application secret values'
         assert not any(d['kind'] == 'Service' and d['spec'].get('type') == 'LoadBalancer' for d in docs)

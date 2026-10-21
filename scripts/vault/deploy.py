@@ -9,9 +9,11 @@ import signal
 import subprocess
 import sys
 from common import DB_KEYS, KEYS, SafeError, validate_values
+from recovery_evidence import require_recovery
 
 NAMESPACE = 'boutique-vault-lab'
 RELEASE = 'boutique-vault-lab'
+STORAGE_CLASS = 'boutique-ebs-gp3'
 CONSUMERS = ('catalogservice', 'frontend', 'productcatalogservice', 'checkoutservice')
 
 
@@ -60,6 +62,8 @@ def smoke(values):
     loader = ('import json,os,sys; p=json.load(sys.stdin); os.environ.update(p["env"]); '
               'exec(compile(p["script"],"vault-lab-smoke","exec"))')
     smoke_credentials = {k: values[k] for k in ('ADMIN_EMAIL', 'ADMIN_PASSWORD', 'ADMIN_API_TOKEN')}
+    # Kubernetes exposes the frontend Service on 80; Compose exposes it on 8080.
+    smoke_credentials['STOREFRONT_TEST_URL'] = 'http://frontend:80'
     output = kubectl('exec', '-i', 'deployment/catalogservice', '--', 'python', '-c', loader,
                      payload=json.dumps({'env': smoke_credentials, 'script': script}), timeout=240)
     try:
@@ -83,15 +87,18 @@ def deploy(values, registry, image_tag, revision):
     run(['kubectl', 'get', 'namespace', NAMESPACE])
     # Readiness of persistent storage is a prerequisite, never silently use ephemeral DB data.
     classes = json.loads(run(['kubectl', 'get', 'storageclass', '-o', 'json']))
-    if not any(c['metadata'].get('annotations', {}).get('storageclass.kubernetes.io/is-default-class') == 'true'
-               for c in classes.get('items', [])):
-        raise SafeError('EKS needs a default StorageClass and its CSI driver before the lab deploy.')
+    storage = next((c for c in classes.get('items', [])
+                    if c.get('metadata', {}).get('name') == STORAGE_CLASS), None)
+    if not storage or storage.get('provisioner') != 'ebs.csi.aws.com' or storage.get('volumeBindingMode') != 'WaitForFirstConsumer':
+        raise SafeError('The lab needs boutique-ebs-gp3 with EBS CSI and WaitForFirstConsumer before deployment.')
+    run(['kubectl', 'get', 'csidriver', 'ebs.csi.aws.com', '-o', 'json'])
     previous_raw = kubectl('get', 'secret', 'boutique-integration', '--ignore-not-found', '-o', 'json')
     previous = json.loads(previous_raw) if previous_raw.strip() else None
     validate_rotation(values, previous)
     pvcs = json.loads(kubectl('get', 'pvc', '-o', 'json'))['items']
     if pvcs and not previous:
         raise SafeError('Persistent data exists without its original Secret. Restore custody before deploying.')
+    require_recovery(kubectl)
     releases = json.loads(run(['helm', 'list', '-n', NAMESPACE, '--all', '-o', 'json']))
     current = next((r for r in releases if r['name'] == RELEASE), None)
     if current and current['status'] != 'deployed':
@@ -101,6 +108,7 @@ def deploy(values, registry, image_tag, revision):
                  '-f', 'helm-chart/values-vault-lab.yaml',
                  '--set-string', 'images.repository=' + registry + '/boutique-eq4',
                  '--set-string', 'images.tag=' + image_tag,
+                 '--set-string', 'postgresIntegration.database.storageClassName=' + STORAGE_CLASS,
                  '--set-string', 'postgresIntegration.rolloutRevision=' + revision,
                  '--atomic', '--wait', '--wait-for-jobs', '--timeout', '10m', '--history-max', '5']
     changed = False
@@ -111,7 +119,7 @@ def deploy(values, registry, image_tag, revision):
                 payload=json.dumps(secret_manifest(values)))
         run(helm_args, timeout=1300)  # Atomic upgrade + rollback can each need ten minutes.
         smoke(values)
-        print('PASS Vault lab deployment and migration completed.')
+        print('PASS application deployment and migration completed.')
     except BaseException:
         if changed:
             try:

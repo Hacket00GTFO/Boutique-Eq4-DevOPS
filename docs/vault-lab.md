@@ -3,8 +3,10 @@
 Implementación para AWS Academy Learner Lab. Vault vive en una EC2 dedicada;
 la aplicación de demostración usa `boutique-vault-lab` como namespace y release.
 La ruta de secretos es `secret/boutique/lab/integration` (KV v2). El entorno
-requiere una sesión activa del laboratorio: las credenciales AWS y el token CI
-expiran. El diseño es de un solo nodo y no ofrece alta disponibilidad.
+requiere una sesión activa del laboratorio y sus credenciales AWS vigentes.
+La [preparación de OIDC y KMS](aws-automatic-deployment.md) permite renovar
+solo esas tres credenciales en cada sesión. El diseño es de un solo nodo y
+no ofrece alta disponibilidad.
 
 ## Arquitectura y contratos
 
@@ -13,11 +15,13 @@ flowchart LR
     A[Operador Linux/WSL] -->|Ansible por SSM| V[EC2 Vault / systemd / Raft]
     A -->|HTTPS 8200 / CIDR restringido| U[Vault UI]
     U --> V
-    G[Commit main] --> T[Pruebas PostgreSQL y Vault]
+    G[Merge development a main] --> T[Pruebas PostgreSQL y Vault]
     T --> E[Imágenes ECR / SHA]
     E --> C[GitHub Actions]
     C -->|SSM / túnel localhost:18200| V
-    V -->|TLS / token CI / lectura KV| C
+    C -->|Ansible por SSM / OIDC| V
+    M[AWS KMS / perfil EC2] -->|auto-unseal| V
+    V -->|TLS / token de cada job / lectura KV| C
     C --> S[Secret boutique-integration]
     S --> K[Helm / migración / cuatro consumidores]
     K --> P[PostgreSQL privado / PVC]
@@ -27,7 +31,8 @@ El Security Group de Vault solo admite entrada TCP 8200 desde redes
 administrativas de /24 o más específicas. No admite SSH. Ansible y CI usan
 SSM con salida HTTPS; no necesitan abrir 8200 para los rangos de GitHub.
 El túnel conserva verificación TLS mediante el SAN `localhost`. La UI directa
-usa el SAN de la IP EC2 y la confianza del certificado exportado.
+requiere un nombre estable incluido en SAN. La IP pública no se incluye,
+porque puede cambiar al reiniciar el Lab; usar el túnel para abrir la UI.
 
 | Clave en KV y Kubernetes | Consumidor |
 | --- | --- |
@@ -47,13 +52,25 @@ Los valores sensibles no pasan por Helm, Terraform ni argumentos de comandos.
 
 ## 1. Preparar el laboratorio
 
-Desde un controlador Ubuntu 24.04 x86_64 (nativo o WSL) con Python 3.12, AWS CLI, Terraform >=1.5,
-kubectl, Helm 3.17.3, GitHub CLI y GPG:
+Desde un controlador Ubuntu 26.04 x86_64 (nativo o WSL) con Python 3.14, AWS CLI, Terraform >=1.5,
+kubectl 1.35, Helm 3.22.1, GitHub CLI y GPG:
+
+En una distribución WSL nueva, preparar Python del sistema y su soporte para
+entornos virtuales. No instalar los paquetes de este proyecto con `sudo pip`:
 
 ```bash
-python -m venv .venv
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip
+python3 --version
+```
+
+La versión mostrada debe ser Python 3.14.x. Desde la raíz del repositorio:
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r ansible/requirements.txt cryptography==45.0.4 PyYAML==6.0.2
+pip install -r ansible/requirements.txt
+python -m pip check
 bash scripts/vault/install-ssm-plugin.sh
 export AWS_DEFAULT_REGION=us-east-1
 export ANSIBLE_SSM_BUCKET=boutique-vault-ssm-NOMBRE-UNICO
@@ -85,15 +102,26 @@ de objetos abandonados tras un día. No reutilizar el bucket de estado. El
 preflight rechaza buckets versionados, incluso si el versionado fue suspendido.
 
 Para PostgreSQL se necesita el addon EBS CSI activo y una StorageClass
-predeterminada funcional. Configurarlos con los permisos/roles existentes que
-admita el Lab antes de continuar. No sustituir el PVC por almacenamiento efímero.
+funcional. En este Learner Lab, el grupo `boutique-eq4-eks-storage` usa
+`LabRole` en un nodo con taint; el controlador CSI debe fijarse a ese nodo.
+Los nodos de la aplicación mantienen su rol limitado. La clase heredada `gp2`
+no sustituye al CSI: usar una clase con provisioner `ebs.csi.aws.com`, probar
+un PVC antes de Helm y no sustituirlo por almacenamiento efímero. Los permisos
+amplios de `LabRole` hacen que esta configuración sea solo para el laboratorio.
 
 ```bash
 aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
 aws eks describe-addon --cluster-name boutique-eq4-eks --addon-name aws-ebs-csi-driver
+kubectl apply -f kubernetes-manifests/aws-ebs-gp3-storageclass.yaml
 kubectl get storageclass
 kubectl create namespace boutique-vault-lab
 ```
+
+Antes de crear PostgreSQL, ejecutar el Job temporal
+`kubernetes-manifests/aws-ebs-smoke.yaml`: debe completar con `ebs-ok` y el PVC
+debe quedar `Bound`. El Job corre en un nodo normal, mientras el controlador
+CSI permanece en el nodo `storage-controller`. Tras guardar el resultado,
+eliminar `boutique-storage-smoke` para retirar el volumen de prueba.
 
 ## 2. Instalar y demostrar idempotencia
 
@@ -124,7 +152,7 @@ En otra terminal, exportar las mismas variables. Antes de init/unseal todavía
 no debe pasar `health.py`. Tras unseal, debe pasar con confianza TLS verificada.
 Para UI a través del túnel abrir `https://localhost:18200/ui/` e instalar el
 certificado público en el almacén de confianza del navegador. La UI directa
-está en `https://IP-PUBLICA:8200/ui/`, restringida por CIDR.
+requiere un nombre DNS estable incluido en SAN, además del CIDR permitido.
 
 ## 3. Ceremonia de bootstrap y custodia
 
@@ -167,47 +195,49 @@ en una ceremonia de recuperación controlada.
 ```bash
 # Probar con el token de operador; configure es repetible y no cambia el secreto.
 python scripts/vault/bootstrap.py configure
-python scripts/vault/bootstrap.py issue-ci --output "$HOME/vault-custody/ci.json"
 # Suministrar explícitamente el token raíz original, no el nuevo operador:
 python scripts/vault/bootstrap.py revoke-self
 ```
 
-El token CI es huérfano, no renovable, sin política predeterminada y con máximo
-de cuatro horas. Su única capacidad es leer el endpoint KV v2 exacto
-`secret/data/boutique/lab/integration`. Reemitirlo cuando expire y revocar el
-anterior por su accessor usando la sesión de operador.
+El comando `issue-ci` se conserva para ensayos manuales de ACL: produce un token
+de cuatro horas. No se usa para Actions. El despliegue automático autentica con
+OIDC y recibe un token batch de máximo 15 minutos, sin política predeterminada,
+que solo lee `secret/data/boutique/lab/integration`.
 
 ## 4. Activar GitHub Actions
 
-Crear el environment `vault-lab` en GitHub y limitarlo a `main`. Configurar:
+Completar la [migración KMS y configuración OIDC](aws-automatic-deployment.md)
+antes de activar el environment `vault-lab`, limitado a `main`. Configuración:
 
 | Ubicación | Nombre | Valor |
 | --- | --- | --- |
-| Variable de repositorio | `ENABLE_VAULT_LAB` | `true` |
 | Variables del environment | `VAULT_INSTANCE_ID` | ID de la EC2 dedicada |
-| Variables del environment | `VAULT_CA_CERT_B64` | Certificado público en base64 |
-| Secret del environment | `VAULT_CI_TOKEN` | Token CI de cuatro horas |
-| Secrets heredados o del environment | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Sesión activa del Learner Lab |
+| Variables del environment | `VAULT_SSM_BUCKET` | Bucket dedicado de transferencias Ansible |
+| Variable del environment | `VAULT_AUTOMATION_READY` | `true`, solo tras verificar migración y confianza OIDC |
+| Variable de repositorio | `AWS_ACCOUNT_ID` | Cuenta esperada por el helper de renovación |
+| Secrets de repositorio | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Tres valores de la misma sesión activa del Lab |
 
-Con GitHub CLI autenticado, transferir el token mediante stdin:
+No duplicar credenciales AWS en el environment. El helper inicial elimina las
+copias heredadas y el secret `VAULT_CI_TOKEN`; las variables antiguas
+`ENABLE_VAULT_LAB` y `VAULT_CA_CERT_B64` ya no intervienen en CD. El certificado
+público se obtiene por SSM en cada ejecución. Ninguna credencial de aplicación,
+participación de recuperación ni token de operador se configura en GitHub.
+
+Para cada sesión posterior, con GitHub CLI autenticado y las tres claves nuevas
+ya exportadas en Ubuntu, transferirlas sin imprimir valores:
 
 ```bash
-python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/"vault-custody/ci.json").read_text())["client_token"])' \
-  | gh secret set VAULT_CI_TOKEN --env vault-lab
-base64 -w0 "$VAULT_CACERT" | gh variable set VAULT_CA_CERT_B64 --env vault-lab
-gh variable set VAULT_INSTANCE_ID --env vault-lab --body INSTANCE-ID
-gh variable set ENABLE_VAULT_LAB --body true
+python3 scripts/vault/configure_actions.py \
+  --repo OWNER/REPOSITORY --rotate-aws-only
 ```
 
-El interruptor es de **repositorio**, porque decide qué job ejecutar antes de
-cargar el environment. En `false`/ausente se conserva el CD anterior; en `true`
-solo se despliega la release de laboratorio. No ejecutar ambos contra la misma
-release. Ninguna credencial de aplicación se configura como secret de GitHub.
-
-Un push relevante a `main` ejecuta PostgreSQL + pruebas Vault, construye ECR y
-dispara CD. El deploy manual acepta un SHA completo, ancestro de `main`, cuyas
-imágenes deben existir. El job verifica CSI, abre SSM, valida TLS, lee KV con
-`vault-action` y despliega con `--atomic --wait --wait-for-jobs`.
+Un merge de `development` a `main` del mismo repositorio ejecuta PostgreSQL y
+pruebas Vault sobre el SHA del merge, construye las doce imágenes ECR y llama al
+CD reutilizable con ese SHA. También despliega cambios solo en documentación.
+El deploy manual acepta un SHA completo, ancestro de `main`, cuyas imágenes
+deben existir. El job reanuda instancias conocidas, aplica Ansible, verifica CSI,
+abre SSM, valida TLS, autentica OIDC, lee KV con `vault-action` y despliega con
+`--atomic --wait --wait-for-jobs`.
 Las nuevas pruebas Vault son obligatorias antes del build ECR.
 
 La verificación funcional reutiliza la suite HTTP/gRPC/PostgreSQL existente
@@ -259,12 +289,56 @@ Helm antes de reintentar; no inventar contraseñas nuevas.
 | Retirar una clave en una versión KV de prueba | Validación falla antes de escribir Kubernetes |
 | Interrumpir SSM | Fallo TLS/conexión; ninguna actualización parcial |
 | Rotar tokens API | Nuevo intento del mismo SHA pasa login, catálogo y checkout |
-| Reiniciar EC2 | Raft conservado, unseal explícito y lectura del mismo secreto |
+| Reiniciar EC2 antes de la migración | Raft conservado, unseal con quorum y lectura del mismo secreto |
+| Reiniciar EC2 después de la migración KMS | Auto-unseal sin participaciones y lectura del mismo secreto |
 | Reiniciar PostgreSQL/pods | Datos y sesiones conservados por el PVC/base |
 
 Registrar revisión de Helm y `resourceVersion` del Secret antes/después sin
 extraer `data`. Restaurar cada alteración antes del siguiente ensayo. No sellar
 Vault ni cambiar políticas de un entorno compartido durante actividad real.
+
+### Recuperar acceso cuando una clave PGP no se abre
+
+Si dos custodios todavía pueden descifrar sus participaciones, abrir Vault con
+ese quorum y conservar la instalación. La generación de otro token raíz no
+requiere descifrar el token raíz original ni reinicializar el almacenamiento.
+En Vault 2.2, `generate-root` exige autenticación por defecto. Este helper usa
+SSM/Ansible para habilitar temporalmente solo esa familia de endpoints, recarga
+con SIGHUP y vuelve a exigir autenticación al terminar o al fallar.
+
+```bash
+export GPG_TTY="$(tty)"
+export RECOVERED_ROOT="$HOME/vault-custody/root-recovered-$(date -u +%Y%m%d-%H%M%S).json"
+python scripts/vault/recover_root.py \
+  --instance-id INSTANCE-ID \
+  --init-file "$HOME/vault-custody/init.json" \
+  --shares 2 3 \
+  --recipient-pgp "$HOME/vault-custody/custodio2.pub" \
+  --output "$RECOVERED_ROOT"
+```
+
+Se requiere la sesión AWS activa, `ANSIBLE_SSM_BUCKET`, el entorno virtual de
+Ansible, el túnel SSM y `VAULT_CACERT`. El helper valida primero ambas claves y
+prueba localmente el destinatario elegido. Guarda el nuevo token cifrado con PGP
+en un archivo exclusivo 0600 fuera del repo, verifica el token en memoria y
+comprueba HTTP 403 al cerrar la ventana. No imprime participaciones ni tokens.
+Generar un nuevo token no revoca el token raíz anterior; gestionar sus accessors
+en la sesión administrativa posterior, después de verificar al operador.
+
+Si la terminal se cierra por la fuerza o no aparece la confirmación de cierre,
+restablecerlo con la misma sesión AWS y el túnel disponibles:
+
+```bash
+python scripts/vault/recover_root.py --instance-id INSTANCE-ID --close-only
+```
+
+Después configurar Vault, emitir y comprobar el operador antes de revocar los
+tokens raíz. Sustituir la clave PGP inaccesible mediante una ceremonia de rekey
+con verificación, conservar las participaciones anteriores hasta completar esa
+ceremonia y renovar las copias cifradas de custodia.
+
+Referencias: [configuración de acceso de recuperación](https://developer.hashicorp.com/vault/docs/configuration#enable_unauthenticated_access)
+y [API de generación por quorum](https://developer.hashicorp.com/vault/api-docs/system/generate-root).
 
 ### Reconstrucción
 

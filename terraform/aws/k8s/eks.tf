@@ -1,12 +1,27 @@
 # El "cerebro" del cluster: la API de Kubernetes administrada por AWS.
-# No corre workloads por si sola, solo coordina.
+
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
-  role_arn = data.aws_iam_role.lab_role.arn
-  version  = "1.31"
+  role_arn = one(data.aws_iam_roles.eks_cluster.arns)
+  version  = "1.35"
 
   vpc_config {
     subnet_ids = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+  }
+}
+
+# Por defecto, AWS limita a 1 "salto" de red el acceso de una instancia EC2
+# a su propio servicio de metadatos (de ahi salen las credenciales del rol de
+# los nodos). Un proceso dentro de un pod esta a 2 saltos del host, asi que
+# sin esto boto3 dentro de los contenedores nunca encuentra credenciales
+# (NoCredentialsError). Subimos el limite a 2 para que los pods si puedan.
+resource "aws_launch_template" "nodes" {
+  name_prefix   = "${var.cluster_name}-nodes-"
+  instance_type = "t3.medium"
+
+  metadata_options {
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
   }
 }
 
@@ -17,14 +32,51 @@ resource "aws_eks_cluster" "main" {
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.cluster_name}-nodes"
-  node_role_arn   = data.aws_iam_role.lab_role.arn
+  node_role_arn   = one(data.aws_iam_roles.eks_nodes.arns)
   subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
-  instance_types  = ["t3.medium"]
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
 
   scaling_config {
     desired_size = 2
     min_size     = 1
     max_size     = 3
+  }
+
+  depends_on = [aws_eks_cluster.main]
+}
+
+# EBS CSI necesita permisos EC2 para aprovisionar los PVC de PostgreSQL.
+# Learner Lab deniega crear roles IAM y ampliar LabEksNodeRole. Mantener
+# LabRole en un nodo dedicado evita dar sus permisos a los pods de la app.
+resource "aws_eks_node_group" "storage_controller" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-storage"
+  node_role_arn   = data.aws_iam_role.lab_storage.arn
+  subnet_ids      = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 1
+  }
+
+  labels = {
+    "boutique.dev/node-purpose" = "storage-controller"
+  }
+
+  taint {
+    key    = "boutique.dev/storage-controller"
+    value  = "true"
+    effect = "NO_SCHEDULE"
   }
 
   depends_on = [aws_eks_cluster.main]

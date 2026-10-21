@@ -21,3 +21,28 @@ path "sys/capabilities-self" {
 path "sys/seal" {
   capabilities = ["update", "sudo"]
 }
+# Vault 2.x authenticates these recovery APIs even when the caller holds a quorum.
+path "sys/generate-root/attempt" {
+  capabilities = ["read", "update", "delete", "sudo"]
+}
+path "sys/generate-root/update" {
+  capabilities = ["update", "sudo"]
+}
+path "sys/rekey/*" {
+  capabilities = ["read", "update", "delete", "sudo"]
+}
+path "sys/auth" {
+  capabilities = ["read"]
+}
+path "sys/auth/github" {
+  capabilities = ["create", "update", "sudo"]
+}
+path "auth/github/config" {
+  capabilities = ["create", "read", "update"]
+}
+path "auth/github/role/boutique-main" {
+  capabilities = ["create", "read", "update"]
+}
+path "sys/storage/raft/snapshot" {
+  capabilities = ["read"]
+}
