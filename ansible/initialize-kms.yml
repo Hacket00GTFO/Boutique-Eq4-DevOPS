@@ -1,0 +1,70 @@
+- name: Initialize a fresh Vault using encrypted recovery custody and local application settings
+  hosts: vault
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require exactly one selected fresh Vault instance
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - inventory_hostname == lookup('ansible.builtin.env', 'VAULT_INSTANCE_ID')
+          - lookup('ansible.builtin.env', 'LOCAL_BOOTSTRAP_FILE') | length > 0
+    - name: Install public-key encryption support
+      ansible.builtin.dnf:
+        name: gnupg2-full
+        allowerasing: true
+        state: present
+    - name: Reserve a root-only temporary initialization directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /run
+        prefix: boutique-initialize.
+      register: vault_initialize_directory
+    - name: Initialize with private values through the SSM connection
+      block:
+        - name: Transfer the reviewed Vault helpers
+          ansible.builtin.copy:
+            src: ../scripts/vault/
+            dest: "{{ vault_initialize_directory.path }}/scripts/vault/"
+            mode: '0600'
+            directory_mode: '0700'
+        - name: Transfer the restricted Vault policies
+          ansible.builtin.copy:
+            src: ../infrastructure/vault/policies/
+            dest: "{{ vault_initialize_directory.path }}/infrastructure/vault/policies/"
+            mode: '0600'
+            directory_mode: '0700'
+        - name: Transfer the one-time application settings without logging them
+          ansible.builtin.copy:
+            src: "{{ lookup('ansible.builtin.env', 'LOCAL_BOOTSTRAP_FILE') }}"
+            dest: "{{ vault_initialize_directory.path }}/payload.json"
+            mode: '0600'
+          no_log: true
+        - name: Initialize fresh Vault and verify native KMS before revoking the root token
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "{{ vault_initialize_directory.path }}/scripts/vault/initialize_kms.py"
+              - --payload
+              - "{{ vault_initialize_directory.path }}/payload.json"
+          environment:
+            VAULT_ADDR: https://localhost:8200
+            VAULT_CACERT: /etc/vault.d/tls/vault.crt
+          changed_when: true
+          no_log: true
+        - name: Fetch only the encrypted recovery custody and sealed Raft backup
+          ansible.builtin.fetch:
+            src: /opt/vault/custody/vault-custody.tar.gpg
+            dest: ../.vault-lab/bootstrap/vault-custody.tar.gpg
+            flat: true
+        - name: Fetch the public initialization verification record
+          ansible.builtin.fetch:
+            src: /opt/vault/custody/verified.json
+            dest: ../.vault-lab/bootstrap/vault-verified.json
+            flat: true
+      always:
+        - name: Remove the selected temporary initialization directory
+          ansible.builtin.file:
+            path: "{{ vault_initialize_directory.path }}"
+            state: absent
+          when: vault_initialize_directory.path is match('^/run/boutique-initialize\.[A-Za-z0-9_]+$')

@@ -1,12 +1,16 @@
 name: Vault security and delivery checks
 on:
   pull_request:
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   push:
     branches: [main]
-    paths: ['scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml']
+    paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   workflow_dispatch: {}
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -15,11 +19,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install validation dependencies
-        run: pip install -r ansible/requirements.txt cryptography==45.0.4 PyYAML==6.0.2
+        run: |
+          pip install -r ansible/requirements.txt
+          python -m pip check
       - name: Download verified Vault test binary
         shell: bash
         run: |
@@ -31,6 +39,8 @@ jobs:
           echo "VAULT_TEST_BINARY=$RUNNER_TEMP/vault-bin/vault" >> "$GITHUB_ENV"
       - name: Real Vault TLS, KV, ACL, expiration, seal and delivery recovery
         run: python -m unittest discover -s scripts/vault/tests -v
+      - name: Verify main push eligibility and read-only recovery tooling
+        run: python -m unittest discover -s scripts/aws/tests -v
       - name: Operations callback privacy and bounded output
         run: python -m unittest discover -s scripts/tests -v
       - name: Validate automation
@@ -39,13 +49,17 @@ jobs:
           ansible-galaxy collection install -r requirements.yml
           ansible-playbook -i 'localhost,' site.yml --syntax-check
           ansible-playbook -i 'localhost,' local-check.yml --syntax-check
-          ansible-lint site.yml local-check.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
+          ansible-playbook -i 'localhost,' root-recovery.yml --syntax-check
+          ansible-playbook -i 'localhost,' kms-migration.yml --syntax-check
+          ansible-playbook -i 'localhost,' initialize-kms.yml --syntax-check
+          ansible-lint site.yml local-check.yml root-recovery.yml kms-migration.yml initialize-kms.yml roles/*/tasks/main.yml roles/*/handlers/main.yml
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v3.22.1
       - name: Validate Helm and rollout behavior
         run: python scripts/vault/validate_chart.py
       - name: Validate Bash syntax
         run: |
           bash -n scripts/vault/install-ssm-plugin.sh
           bash -n scripts/vault/rebuild-lab.sh
+          bash -n scripts/vault/tunnel.sh

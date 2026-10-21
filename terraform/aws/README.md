@@ -9,7 +9,8 @@ correr dentro de un **AWS Academy Learner Lab**. Se divide en dos partes:
 - **`terraform/aws/k8s/`**: el clúster EKS, ECR, y toda la parte de cómputo
   (contenedores). El backend del Admin Panel (catálogo, inventario, pedidos)
   y los 11 microservicios de Online Boutique corren ahí, empaquetados con
-  Docker y desplegados vía Helm — no en Lambda. Ver el README de esa carpeta.
+  Docker y desplegados vía Helm — no en Lambda. Ver la
+  [lista de despliegue Learner Lab](../../docs/learner-lab-deployment.md).
 
 ## Por qué hay una carpeta `bootstrap/`
 
@@ -75,7 +76,7 @@ correr `terraform apply` (es decir, para desplegar cambios nuevos, como
 agregar la tabla de inventario o de pedidos más adelante).
 
 Para el cómputo que lee/escribe esta tabla (contenedores en el clúster EKS),
-ver `terraform/aws/k8s/README.md`.
+ver la [lista de despliegue Learner Lab](../../docs/learner-lab-deployment.md).
 
 ## Paso 3: dejar que GitHub Actions lo haga por ti
 

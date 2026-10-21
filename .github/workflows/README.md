@@ -1,51 +1,58 @@
-# GitHub Actions Workflows
+# GitHub Actions workflows
 
-This page describes the CI/CD workflows for the Online Boutique app, which run in [Github Actions](https://github.com/GoogleCloudPlatform/microservices-demo/actions).
+This repository deploys to AWS. The inherited Google Cloud staging, cleanup,
+and release workflows are not used here.
 
-## Infrastructure
+## Pull requests
 
-The CI/CD pipelines for Online Boutique run on standard GitHub-hosted runners (Ubuntu). 
+- `ci-pr.yaml` runs Go and C# tests for pull requests targeting `development`
+  or `main`, using the same reusable `ci-code-tests.yaml` required by release.
+- Other validation workflows check Terraform, Helm, Kustomize, and manifests as
+  their path filters allow. Open pull requests do not deploy to staging.
 
-We also host a test GKE cluster, which is where the deploy tests run. Every PR has its own namespace in the cluster.
+## AWS deployment
 
-## Workflows
+- `deploy-aws-backend.yaml` applies the AWS data layer when relevant Terraform
+  files change on `main`, or when run manually.
+- `ci-docker-ecr.yaml` starts on every push to `main`, so the run appears on
+  main. It authorizes release only when the exact SHA belongs to a merged
+  same-repository `development` PR, including documentation-only merges. It validates the
+  immutable merge SHA, tests it, then builds and pushes all twelve ECR images.
+- Its final job calls `cd-helm-eks.yaml` with that same SHA after every image
+  succeeds. CD resumes known Lab instances, applies Ansible, obtains Vault
+  secrets through GitHub OIDC, and runs Helm, migration and functional smoke.
+  Both workflows also allow manual runs on `main`; direct CD requires a full
+  release SHA whose images already exist.
+- `deploy-aws-prod.yaml` is a historical ECS deployment. It requires a manual
+  dispatch on `main` and `ENABLE_ECS_DEPLOY=true`.
 
-**Note**: In order for the current CI/CD setup to work on your pull request, you must branch directly off the repo (no forks). This is because the Github secrets necessary for these tests aren't copied over when you fork.
+The ECR, EKS, and data-layer workflows use the `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` repository secrets from the AWS
+Academy Learner Lab session. Refresh them when the session changes. The data
+layer also uses `TF_STATE_BUCKET`.
 
-### Code Tests - [ci-pr.yaml](ci-pr.yaml)
+For the full Learner Lab route with Terraform, Ansible, Vault, and Helm, follow
+the [deployment checklist](../../docs/learner-lab-deployment.md). Install and
+initialize Vault, then complete the one-time
+[verified recovery and activation](../../docs/aws-automatic-deployment.md).
+`DATA_RECOVERY_VERIFIED` and `VAULT_AUTOMATION_READY` in the `vault-lab`
+environment gate publication and CD. Native KMS, OIDC and verified TLS are
+mandatory; there is no fallback to direct Kubernetes Secret delivery. CI reads Vault
+with a per-job token; no stored `VAULT_CI_TOKEN` or static CA variable is needed.
+Keep AWS credentials only as repository secrets, with no stale environment
+overrides. The platform Lab must be active; GitHub cannot extend its timer.
 
-These tests run on every commit for every open PR, as well as any commit to main / any release branch. Currently, this workflow runs only Go unit tests.
+Manual operations are explicit: `inventory` on `development` is read-only;
+`initialize-local-data` on `main` restores the accepted backup during the initial
+setup window; `release` on `main` builds and deploys the current main SHA. Other
+recovery operations remain opt-in. See the
+[recovery report](../../docs/recovery-2026-10-20.md) for the retained resources.
 
-
-### Deploy Tests- [ci-pr.yaml](ci-pr.yaml)
-
-These tests run on every commit for every open PR, as well as any commit to main / any release branch. This workflow:
-
-1. Creates a dedicated GKE namespace for that PR, if it doesn't already exist, in the PR GKE cluster.
-2. Uses `skaffold run` to build and push the images specific to that PR commit. Then skaffold deploys those images, via `kubernetes-manifests`, to the PR namespace in the test cluster.
-3. Tests to make sure all the pods start up and become ready.
-4. Gets the LoadBalancer IP for the frontend service.
-5. Comments that IP in the pull request, for staging.
-
-### Push and Deploy Latest - [push-deploy](push-deploy.yml)
-
-This is the Continuous Deployment workflow, and it runs on every commit to the main branch. This workflow:
-
-1. Builds the container images for every service, tagging as `latest`.
-2. Pushes those images to Google Container Registry.
-
-Note that this workflow does not update the image tags used in `release/kubernetes-manifests.yaml` - these release manifests are tied to a stable `v0.x.x` release.
-
-### Cleanup - [cleanup.yaml](cleanup.yaml)
-
-This workflow runs when a PR closes, regardless of whether it was merged into main. This workflow deletes the PR-specific GKE namespace in the test cluster.
-
-### Manual Release Builder - [make-release.yaml](make-release.yaml)
-
-This workflow is manually triggered via the `workflow_dispatch` event to automate the release process. When run, it:
-1. Validates the release version format.
-2. Automates the build and push of container images to Google Cloud Build.
-3. Automatically regenerates Kubernetes manifests and Kustomize bases.
-4. Packages and pushes the Helm chart.
-5. Branches and tags the repository.
-6. Opens a new Pull Request targeting `main` with the release checklist.
+Release runs use `queue: max` with `cancel-in-progress: false` so up to 100
+pending merges can wait instead of replacing the previous pending run.
+Bootstrap and CD also share a deployment lock. This is supported by
+[GitHub Actions concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Actionlint 1.7.12 does not yet recognize `queue`; when using that version,
+ignore only `unexpected key "queue" for "concurrency" section`, inspect that
+each occurrence is `max` with cancellation disabled, and require GitHub's
+workflow validation. Do not suppress other syntax or expression diagnostics.

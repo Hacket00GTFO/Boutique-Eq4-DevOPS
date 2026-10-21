@@ -8,6 +8,7 @@ postgresIntegration:
   cookieSecure: false # Browser access is through kubectl port-forward in this lab.
   database:
     create: true
+    storageClassName: boutique-ebs-gp3
 frontend:
   externalService: false
 loadGenerator:

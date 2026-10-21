@@ -1,4 +1,4 @@
-"""End-to-end HTTP integration against the LOCAL demo containers only.
+"""End-to-end HTTP integration against the isolated demo deployment.
 
 Runs in catalogservice with temporary ADMIN_EMAIL/ADMIN_PASSWORD env values.
 Creates its own SKU and a simulated order; archives the SKU afterwards.
@@ -20,7 +20,8 @@ checks = []
 
 
 def request(path, data=None, backend=False, method=None, expected=200):
-    base = 'http://localhost:8080' if backend else 'http://frontend:8080'
+    base = ('http://localhost:8080' if backend else
+            os.environ.get('STOREFRONT_TEST_URL', 'http://frontend:8080'))
     headers = {}
     if backend:
         headers['Authorization'] = 'Bearer ' + os.environ['ADMIN_API_TOKEN']

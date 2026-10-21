@@ -1,31 +1,339 @@
 name: "CI: Docker build & push a ECR"
 
-# Construye la imagen Docker de cada microservicio y la sube a su
-# repositorio en Amazon ECR (creados por terraform/aws/k8s). Corre en cada
-# push a main que toque codigo fuente de algun servicio.
-#
-# Requiere los mismos secrets AWS_* que el resto de los workflows de AWS
-# (ver terraform/aws/README.md), refrescados cada sesion del Learner Lab.
+# A main push is visible on main; exact merged development PR metadata authorizes release.
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "helm-chart/**"
-      - "scripts/vault/**"
-      - ".github/workflows/cd-helm-eks.yaml"
-      - ".github/workflows/ci-docker-ecr.yaml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'release builds and deploys main; initialize-local-data is one-time recovery'
+        type: choice
+        options: [release, inventory, inspect-worker, worker-restart, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
+        default: release
+      existing_kms_key_arn:
+        description: 'Resume KMS preparation with an already-created key; never recreate it'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: boutique-aws-release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'inventory' || inputs.operation == 'inspect-worker') && 'inspection' || 'deployment' }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
+  recovery-inventory:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'inventory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Inspect retained backups and KMS permissions without changing resources
+        run: python3 scripts/aws/recovery_inventory.py
+  inspect-worker:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && (inputs.operation == 'inspect-worker' || inputs.operation == 'worker-restart')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Inspect startup or recover only the known unjoined workers
+        env:
+          WORKER_OPERATION: ${{ inputs.operation }}
+        run: |
+          if [[ "$WORKER_OPERATION" == worker-restart ]]; then
+            python3 scripts/aws/inspect_worker.py --restart-unjoined-workers
+          else
+            python3 scripts/aws/inspect_worker.py
+          fi
+  prepare-vault-kms:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'prepare-vault-kms'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Prepare the persistent Vault KMS key before creating EKS
+        env:
+          EXISTING_KMS_KEY_ARN: ${{ inputs.existing_kms_key_arn }}
+        run: |
+          args=()
+          if [[ -n "$EXISTING_KMS_KEY_ARN" ]]; then
+            args+=(--existing-key-arn "$EXISTING_KMS_KEY_ARN")
+          fi
+          python3 scripts/aws/prepare_vault_kms.py "${args[@]}"
+  rebuild-infrastructure:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development' && inputs.operation == 'rebuild-infrastructure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Recreate owned infrastructure from reviewed plans without replacing resources
+        run: python3 -u scripts/aws/provision_lab.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-infrastructure-metadata
+          path: .vault-lab/infrastructure.json
+          include-hidden-files: true
+          retention-days: 1
+  initialize-local-data:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'initialize-local-data'
+    environment: vault-lab
+    concurrency:
+      group: boutique-vault-lab-deploy
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
+      VAULT_KMS_KEY_ARN: ${{ vars.VAULT_KMS_KEY_ARN }}
+      ANSIBLE_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
+      VAULT_ADDR: https://127.0.0.1:18200
+      VAULT_CACERT: ${{ github.workspace }}/.vault-lab/certs/${{ vars.VAULT_INSTANCE_ID }}.pem
+      LOCAL_BOOTSTRAP_FILE: ${{ github.workspace }}/.vault-lab/bootstrap/vault-payload.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require the deliberate initial-setup window
+        env:
+          AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
+        run: |
+          test "$AUTOMATION_READY" != true
+          [[ "$VAULT_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]]
+          [[ "$VAULT_KMS_KEY_ARN" =~ ^arn:aws:kms:us-east-1:716142453772:key/[0-9a-f-]{36}$ ]]
+          test -n "$ANSIBLE_SSM_BUCKET"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Verify the exact AWS account
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = 716142453772
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.1
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Install the pinned Ansible dependencies and SSM plugin
+        run: |
+          python -m pip install -r ansible/requirements.txt
+          ansible-galaxy collection install -r ansible/requirements.yml
+          bash scripts/vault/install-ssm-plugin.sh
+      - name: Prepare the accepted local backup without logging application settings
+        env:
+          LOCAL_RECOVERY_PAYLOAD: ${{ secrets.LOCAL_RECOVERY_PAYLOAD }}
+        run: python scripts/vault/restore_local.py prepare
+      - name: Resume existing workers and wait for persistent storage
+        run: |
+          python scripts/vault/resume_lab.py --instance-id "$VAULT_INSTANCE_ID"
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          python scripts/vault/require_automation.py cluster
+      - name: Install Vault and configure its persistent native KMS seal
+        working-directory: ansible
+        run: |
+          ansible-playbook site.yml --limit "$VAULT_INSTANCE_ID"
+          ansible-playbook kms-migration.yml --limit "$VAULT_INSTANCE_ID" \
+            -e "vault_migration_instance=$VAULT_INSTANCE_ID" -e "vault_kms_key_arn=$VAULT_KMS_KEY_ARN"
+          ansible-playbook initialize-kms.yml --limit "$VAULT_INSTANCE_ID"
+      - name: Load the public certificate obtained through authenticated SSM
+        id: trust
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          certificate = Path(os.environ['VAULT_CACERT']).read_bytes()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('ca=' + base64.b64encode(certificate).decode() + '\n')
+          PY
+      - name: Verify the real KMS restart through the TLS tunnel
+        run: bash scripts/vault/tunnel.sh start
+      - name: Verify actual GitHub OIDC and read the preserved local application settings
+        id: vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://127.0.0.1:18200
+          method: jwt
+          path: github
+          role: boutique-main
+          jwtGithubAudience: ${{ github.server_url }}/${{ github.repository }}
+          caCertificate: ${{ steps.trust.outputs.ca }}
+          tlsSkipVerify: false
+          exportEnv: false
+          exportToken: false
+          outputToken: false
+          ignoreNotFound: false
+          secrets: secret/data/boutique/lab/integration * | BOUTIQUE_
+      - name: Restore the accepted PostgreSQL backup and verify the original administrator
+        env:
+          DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_MIGRATION_DATABASE_URL }}
+          APP_DB_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_APP_DB_PASSWORD }}
+          ADMIN_EMAIL: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_PASSWORD }}
+          ADMIN_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_API_TOKEN }}
+          CATALOG_READ_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CATALOG_READ_TOKEN }}
+          CHECKOUT_API_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_CHECKOUT_API_TOKEN }}
+          POSTGRES_PASSWORD: ${{ steps.vault.outputs.BOUTIQUE_POSTGRES_PASSWORD }}
+        run: |
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          python scripts/vault/restore_local.py restore
+      - name: Save only encrypted custody and public verification records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-bootstrap-verification
+          path: |
+            .vault-lab/bootstrap/vault-custody.tar.gpg
+            .vault-lab/bootstrap/vault-verified.json
+            .vault-lab/bootstrap/database-verified.json
+            .vault-lab/bootstrap/oidc-verified.json
+            .vault-lab/bootstrap/bootstrap-verified.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
+      - name: Close the SSM session
+        if: always()
+        run: bash scripts/vault/tunnel.sh stop
+      - name: Remove the one-time private inputs
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('local-payload.json', 'vault-payload.json'):
+              (Path('.vault-lab/bootstrap') / name).unlink(missing_ok=True)
+          PY
+  release:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'release')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+      image_tag: ${{ steps.gate.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the exact main SHA belongs to a merged development PR
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/aws/release_event.py
+      - name: Verify release ancestry
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+  requirements:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
+    environment: vault-lab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      DATA_RECOVERY_VERIFIED: ${{ vars.DATA_RECOVERY_VERIFIED }}
+      VAULT_AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
+      VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
+      VAULT_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
+      VAULT_KMS_KEY_ARN: ${{ vars.VAULT_KMS_KEY_ARN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.image_tag }}
+          persist-credentials: false
+      - name: Require verified data recovery and Vault/KMS/OIDC/TLS configuration
+        run: python3 scripts/vault/require_automation.py configuration
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+      - name: Require the target account, active EKS and the persistent KMS key
+        run: python3 scripts/vault/require_automation.py cloud
   integration:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
     uses: ./.github/workflows/ci-postgres-integration.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
+  code-tests:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
+    uses: ./.github/workflows/ci-code-tests.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
   vault-security:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
     uses: ./.github/workflows/ci-vault.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
   build-and-push:
-    needs: [integration, vault-security]
+    needs: [release, requirements, code-tests, integration, vault-security]
+    if: needs.release.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         service:
           - { name: adservice, context: src/adservice }
@@ -42,24 +350,71 @@ jobs:
           - { name: shippingservice, context: src/shippingservice }
     steps:
       - uses: actions/checkout@v7
-
-      - name: Configurar credenciales de AWS (Learner Lab)
+        with:
+          ref: ${{ needs.release.outputs.image_tag }}
+          persist-credentials: false
+      - name: Configure the three AWS repository credentials
+        id: aws
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
-
-      - name: Login a ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build y push
+      - name: Require the target AWS account
         env:
-          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
+        run: test "$AWS_ACCOUNT" = 716142453772
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push the exact release
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPO: boutique-eq4/${{ matrix.service.name }}
+          BUILD_CONTEXT: ${{ matrix.service.context }}
+          IMAGE_TAG: ${{ needs.release.outputs.image_tag }}
         run: |
-          docker build -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" ${{ matrix.service.context }}
-          docker push "$REGISTRY/$REPO:${{ github.sha }}"
+          set -euo pipefail
+          docker build -t "$REGISTRY/$REPO:$IMAGE_TAG" -t "$REGISTRY/$REPO:latest" "$BUILD_CONTEXT"
+          docker push "$REGISTRY/$REPO:$IMAGE_TAG"
           docker push "$REGISTRY/$REPO:latest"
+  deploy:
+    needs: [release, build-and-push]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/cd-helm-eks.yaml
+    with:
+      image_tag: ${{ needs.release.outputs.image_tag }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+  release-summary:
+    needs: [release, requirements, code-tests, integration, vault-security, build-and-push, deploy]
+    if: always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.operation == 'release')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report the actual release outcome
+        env:
+          AUTHORIZED: ${{ needs.release.outputs.deploy }}
+          RELEASE_SHA: ${{ needs.release.outputs.image_tag }}
+          GATE_RESULT: ${{ needs.release.result }}
+          BUILD_RESULT: ${{ needs.build-and-push.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        run: |
+          {
+            echo '## AWS release'
+            echo "SHA: $RELEASE_SHA"
+            echo "Authorization: $GATE_RESULT; build: $BUILD_RESULT; deployment and smoke: $DEPLOY_RESULT"
+            if [[ "$AUTHORIZED" != true ]]; then
+              echo 'No application deployment was authorized for this event.'
+            elif [[ "$DEPLOY_RESULT" == success ]]; then
+              echo 'Application deployment and functional smoke passed.'
+            else
+              echo 'Deployment is incomplete. Inspect the failed stage; renew all three AWS secrets if the Lab session expired.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$GATE_RESULT" == success ]]
+          [[ "$AUTHORIZED" != true || "$DEPLOY_RESULT" == success ]]

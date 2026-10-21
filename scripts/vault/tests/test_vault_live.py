@@ -1,4 +1,5 @@
 """Real TLS/KV/ACL/expiration/seal tests against an isolated Vault subprocess."""
+import base64
 import contextlib
 import gzip
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import signal
 import ssl
 import subprocess
 import sys
@@ -19,6 +22,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import DATA_PATH, SafeError, Vault, validate_values
 import bootstrap
+import recover_root
 
 
 def free_port():
@@ -57,7 +61,8 @@ class LiveVaultTests(unittest.TestCase):
         config = {'ui': True, 'disable_mlock': True, 'api_addr': f'https://127.0.0.1:{cls.port}',
                   'cluster_addr': 'https://' + listener['cluster_address'],
                   'storage': {'raft': {'path': str(root / 'data'), 'node_id': 'test'}}, 'listener': {'tcp': listener}}
-        (root / 'config.json').write_text(json.dumps(config))
+        cls.config_path = root / 'config.json'
+        cls.config_path.write_text(json.dumps(config))
         cls.log = (root / 'server.log').open('w')
         cls.addClassCleanup(cls.log.close)
         cls.command = [os.environ['VAULT_TEST_BINARY'], 'server', '-config=' + str(root / 'config.json')]
@@ -116,6 +121,56 @@ class LiveVaultTests(unittest.TestCase):
                                    ('GET', 'secret/data/other', None), ('GET', 'secret/metadata/boutique/lab/integration', None)]:
             with self.subTest(path=path), self.assertRaisesRegex(SafeError, '403'):
                 client.request(method, path, body)
+
+    @unittest.skipUnless(os.name == 'posix', 'Operator custody files require POSIX permissions')
+    def test_operator_survives_root_revocation_and_can_issue_restricted_ci(self):
+        _, result = self.root.request('POST', 'auth/token/create-orphan', {
+            'policies': ['root'], 'display_name': 'bootstrap-test',
+        })
+        bootstrap_root = Vault(result['auth']['client_token'])
+        operator = ci = None
+        try:
+            with tempfile.TemporaryDirectory(prefix='boutique-operator-test-') as directory:
+                output = Path(directory) / 'operator.json'
+                with patch.dict(os.environ, {'VAULT_TOKEN': bootstrap_root.token}), \
+                     patch.object(sys, 'argv', ['bootstrap.py', 'issue-operator', '--output', str(output)]), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    bootstrap.main()
+                auth = json.loads(output.read_text())
+                self.assertTrue(auth['orphan'])
+                self.assertFalse(auth['renewable'])
+                self.assertLessEqual(auth['lease_duration'], 86400)
+                self.assertIn('boutique-operator', auth['policies'])
+                self.assertNotIn('root', auth['policies'])
+                self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+                operator = Vault(auth['client_token'])
+                bootstrap_root.request('POST', 'auth/token/revoke-self')
+                bootstrap_root = None
+                self.assertEqual(operator.request('GET', DATA_PATH)[1]['data']['data'], self.values)
+                # Reading recovery status must be possible without opening unauthenticated access.
+                operator.request('GET', 'sys/generate-root/attempt')
+                _, capabilities = operator.request('POST', 'sys/capabilities-self',
+                                                   {'paths': ['sys/rekey/init', 'sys/rekey/update', 'sys/rekey/verify']})
+                for path in ('sys/rekey/init', 'sys/rekey/update', 'sys/rekey/verify'):
+                    self.assertIn('update', capabilities[path])
+                    self.assertIn('sudo', capabilities[path])
+                _, issued = operator.request('POST', 'auth/token/create/boutique-ci', {
+                    'policies': ['boutique-ci'], 'no_default_policy': True,
+                    'ttl': '1m', 'explicit_max_ttl': '1m', 'renewable': False,
+                })
+                ci = Vault(issued['auth']['client_token'])
+                self.assertEqual(issued['auth']['policies'], ['boutique-ci'])
+                self.assertTrue(issued['auth']['orphan'])
+                self.assertEqual(ci.request('GET', DATA_PATH)[1]['data']['data'], self.values)
+                with self.assertRaisesRegex(SafeError, '403'):
+                    ci.request('GET', 'sys/generate-root/attempt')
+        finally:
+            if ci:
+                self.root.request('POST', 'auth/token/revoke', {'token': ci.token})
+            if operator:
+                self.root.request('POST', 'auth/token/revoke', {'token': operator.token})
+            if bootstrap_root:
+                bootstrap_root.request('POST', 'auth/token/revoke-self')
 
     def test_expired_token_fails_closed(self):
         client, _ = self.token('1s')
@@ -208,6 +263,64 @@ class LiveVaultTests(unittest.TestCase):
             with patch.object(sys, 'argv', ['bootstrap.py', 'seed']), self.assertRaises(SafeError):
                 bootstrap.main()
         self.assertEqual(self.root.request('GET', DATA_PATH)[1]['data']['data'], self.values)
+
+    @unittest.skipUnless(os.name == 'posix' and shutil.which('gpg'), 'Requires POSIX and GPG')
+    def test_root_recovery_quorum_preserves_data_and_closes_access(self):
+        custody = Path(self.temp.name) / 'recovery-custody'
+        custody.mkdir(mode=0o700)
+        home = custody / 'gnupg'
+        home.mkdir(mode=0o700)
+        gpg = ['gpg', '--homedir', str(home)]
+        original_config = self.config_path.read_text()
+        recovered = None
+
+        def toggle(enabled):
+            config = json.loads(original_config)
+            config['enable_unauthenticated_access'] = ['generate-root'] if enabled else []
+            self.config_path.write_text(json.dumps(config))
+            self.process.send_signal(signal.SIGHUP)
+
+        try:
+            for name in ('custodian2', 'custodian3'):
+                # Empty passphrases are only for ephemeral test keys in this isolated fixture.
+                subprocess.run(gpg + ['--batch', '--pinentry-mode', 'loopback', '--passphrase', '',
+                                     '--quick-generate-key', name + '@recovery.invalid',
+                                     'default', 'default', '0'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            recipient = custody / 'custodian2.pub'
+            recipient.write_bytes(subprocess.run(gpg + ['--export', 'custodian2@recovery.invalid'],
+                                                 stdout=subprocess.PIPE, check=True).stdout)
+            encrypted_shares = []
+            for index, share in enumerate(self.shares):
+                name = 'custodian3' if index == 2 else 'custodian2'
+                result = subprocess.run(gpg + ['--batch', '--trust-model', 'always', '--recipient',
+                                               name + '@recovery.invalid', '--encrypt'],
+                                        input=share.encode(), stdout=subprocess.PIPE, check=True)
+                encrypted_shares.append(base64.b64encode(result.stdout).decode())
+            init_file = custody / 'init.json'
+            init_file.write_text(json.dumps({'keys_base64': encrypted_shares}))
+            output = custody / 'recovered-root.json'
+            messages = io.StringIO()
+            with contextlib.redirect_stdout(messages):
+                recover_root.recover(Vault(), init_file, [2, 3], recipient, output, home, toggle)
+            document = json.loads(output.read_text())
+            self.assertEqual(document['status'], 'verified')
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            token = recover_root.decrypt_pgp(base64.b64decode(document['root_token']), home)
+            self.assertNotIn(token, output.read_text())
+            self.assertNotIn(token, messages.getvalue())
+            self.assertNotIn(self.root.token, messages.getvalue())
+            recovered = Vault(token)
+            self.assertIn('root', recovered.request('GET', 'auth/token/lookup-self')[1]['data']['policies'])
+            self.assertEqual(Vault().request('GET', 'sys/generate-root/attempt', allowed=(403,))[0], 403)
+            self.root.ready()
+            self.assertEqual(self.root.request('GET', DATA_PATH)[1]['data']['data'], self.values)
+        finally:
+            if recovered:
+                recovered.request('POST', 'auth/token/revoke-self')
+            self.config_path.write_text(original_config)
+            self.process.send_signal(signal.SIGHUP)
+            subprocess.run(['gpgconf', '--homedir', str(home), '--kill', 'gpg-agent'], check=False)
 
     def test_z_restart_retains_raft_and_requires_unseal(self):
         self.__class__.stop()

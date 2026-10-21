@@ -102,6 +102,9 @@ spec:
       name: data
     spec:
       accessModes: [ReadWriteOnce]
+{{- with .Values.postgresIntegration.database.storageClassName }}
+      storageClassName: {{ . | quote }}
+{{- end }}
       resources:
         requests:
           storage: {{ .Values.postgresIntegration.database.storage }}

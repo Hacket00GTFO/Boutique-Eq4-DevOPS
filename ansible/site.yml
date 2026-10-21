@@ -10,6 +10,35 @@
           - ansible_facts.os_family == 'RedHat'
           - ansible_facts.architecture == 'x86_64'
         fail_msg: Use Amazon Linux 2023 x86_64 and set ANSIBLE_SSM_BUCKET.
+    - name: Inspect the mandatory native KMS seal before routine configuration
+      ansible.builtin.stat:
+        path: /etc/vault.d/seal.hcl
+      register: vault_required_seal
+      when: vault_require_kms | default(false) | bool
+    - name: Require a persistent seal file for deployment
+      ansible.builtin.assert:
+        that: vault_required_seal.stat.exists
+        fail_msg: Complete the backed-up native KMS migration before deployment.
+      when: vault_require_kms | default(false) | bool
+    - name: Read the persistent seal without exposing its contents
+      ansible.builtin.slurp:
+        src: /etc/vault.d/seal.hcl
+      register: vault_required_seal_content
+      no_log: true
+      when: vault_require_kms | default(false) | bool
+    - name: Match the persistent KMS key to the configured deployment key
+      vars:
+        vault_expected_seal: |
+          seal "awskms" {
+            region = "us-east-1"
+            kms_key_id = "{{ lookup('ansible.builtin.env', 'VAULT_KMS_KEY_ARN') }}"
+          }
+      ansible.builtin.assert:
+        that:
+          - (vault_required_seal_content.content | b64decode | trim) == (vault_expected_seal | trim)
+        fail_msg: Preserve the existing encryption key and reconcile the deployment configuration.
+      no_log: true
+      when: vault_require_kms | default(false) | bool
   roles:
     - dependencies
     - vault_install
