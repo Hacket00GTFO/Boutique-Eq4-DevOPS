@@ -36,7 +36,6 @@ jobs:
     concurrency:
       group: boutique-vault-lab-deploy
       cancel-in-progress: false
-      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -106,9 +105,6 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1
-      - uses: azure/setup-kubectl@v4
-        with:
-          version: v1.35.9
       - name: Resolve ECR registry
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -119,16 +115,22 @@ jobs:
         run: |
           set -euo pipefail
           aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
-          python scripts/vault/require_automation.py cluster
-          for service in adservice cartservice catalogservice checkoutservice currencyservice emailservice frontend loadgenerator paymentservice productcatalogservice recommendationservice shippingservice; do
+          aws eks describe-addon --cluster-name boutique-eq4-eks --addon-name aws-ebs-csi-driver --query 'addon.status' --output text | grep -qx ACTIVE
+          for service in adservice cartservice catalogservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
             aws ecr describe-images --repository-name "boutique-eq4/$service" --image-ids "imageTag=$IMAGE_TAG" >/dev/null
           done
           kubectl get namespace boutique-vault-lab >/dev/null
+          kubectl wait --for=condition=Ready nodes --all --timeout=600s
       - name: Open SSM tunnel and verify Vault TLS
         env:
           VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
         shell: bash
-        run: bash scripts/vault/tunnel.sh start
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$VAULT_INSTANCE_ID" && test -s "$VAULT_CACERT"
+          python scripts/vault/ssm_tunnel.py --instance-id "$VAULT_INSTANCE_ID" --pid-file "$RUNNER_TEMP/vault-tunnel.pid" > "$RUNNER_TEMP/vault-tunnel.log" 2>&1 &
+          python scripts/vault/require_automation.py runtime
       - name: Read application secrets from Vault
         id: vault
         uses: hashicorp/vault-action@v3
@@ -146,7 +148,6 @@ jobs:
           ignoreNotFound: false
           secrets: secret/data/boutique/lab/integration * | BOUTIQUE_
       - name: Deliver Secret, migrate, deploy and verify functionality
-        id: delivery
         env:
           DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_DATABASE_URL }}
           MIGRATION_DATABASE_URL: ${{ steps.vault.outputs.BOUTIQUE_MIGRATION_DATABASE_URL }}
@@ -163,15 +164,16 @@ jobs:
       - name: Close remote SSM session and remove temporary trust files
         if: always()
         shell: bash
-        run: bash scripts/vault/tunnel.sh stop
-      - name: Report deployment and smoke status
-        if: always()
-        env:
-          DELIVERY_RESULT: ${{ steps.delivery.outcome }}
         run: |
-          {
-            echo '## EKS deployment'
-            echo "Release SHA: $IMAGE_TAG"
-            echo "Helm, migrations and functional smoke: ${DELIVERY_RESULT:-not executed}"
-            echo 'Recovery results, when needed, are recorded by the delivery step.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.pid" ]]; then
+            kill -TERM "$(cat "$RUNNER_TEMP/vault-tunnel.pid")" 2>/dev/null || true
+            for attempt in {1..45}; do
+              [[ ! -f "$RUNNER_TEMP/vault-tunnel.pid" ]] && break
+              sleep 1
+            done
+          fi
+          if [[ -f "$RUNNER_TEMP/vault-tunnel.session" ]]; then
+            aws ssm terminate-session --region us-east-1 --session-id "$(cat "$RUNNER_TEMP/vault-tunnel.session")" >/dev/null
+          fi
+          rm -f "$VAULT_CACERT" "$RUNNER_TEMP/vault-tunnel.pid" "$RUNNER_TEMP/vault-tunnel.session" "$RUNNER_TEMP/vault-tunnel.log"

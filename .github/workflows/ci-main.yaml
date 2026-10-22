@@ -31,8 +31,27 @@ on:
       - '.github/workflows/helm-chart-ci.yaml'
 jobs:
   code-tests:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci-code-tests.yaml
-    with:
-      ref: ${{ github.sha }}
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-dotnet@v6
+      env:
+        DOTNET_INSTALL_DIR: "./.dotnet"
+      with:
+        dotnet-version: '10.0'
+    - uses: actions/setup-go@v6
+      with:
+        go-version: '1.26'
+    - name: Go Unit Tests
+      timeout-minutes: 10
+      run: |
+        for SERVICE in "shippingservice" "productcatalogservice"; do
+          echo "testing $SERVICE..."
+          pushd src/$SERVICE
+          go test
+          popd
+        done
+    - name: C# Unit Tests
+      timeout-minutes: 10
+      run: |
+        dotnet test src/cartservice/
