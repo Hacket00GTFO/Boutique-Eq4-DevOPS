@@ -22,6 +22,8 @@ def authorize(event_name, ref, sha, repo, event, lookup):
     if ref != 'refs/heads/main':
         return False, 'This branch permits recovery inventory only; release requires main.'
     if event_name == 'workflow_dispatch':
+        if event.get('inputs', {}).get('operation') != 'release':
+            return False, 'Manual setup and inspection operations do not authorize an application release.'
         return True, 'Explicit manual release from main.'
     if event_name != 'push' or event.get('deleted'):
         return False, 'This event does not authorize a release.'

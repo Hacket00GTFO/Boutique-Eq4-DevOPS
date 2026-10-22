@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'One-time preparation; normal main dispatch builds and deploys the release'
+        description: 'release builds and deploys main; initialize-local-data is one-time recovery'
         type: choice
-        options: [inventory, inspect-worker, worker-restart, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
-        default: inventory
+        options: [release, inventory, inspect-worker, worker-restart, prepare-vault-kms, rebuild-infrastructure, initialize-local-data]
+        default: release
       existing_kms_key_arn:
         description: 'Resume KMS preparation with an already-created key; never recreate it'
         type: string
@@ -23,6 +23,7 @@ permissions:
 concurrency:
   group: boutique-aws-release-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'inventory' || inputs.operation == 'inspect-worker') && 'inspection' || 'deployment' }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   recovery-inventory:
@@ -125,6 +126,10 @@ jobs:
   initialize-local-data:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'initialize-local-data'
     environment: vault-lab
+    concurrency:
+      group: boutique-vault-lab-deploy
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       id-token: write
@@ -134,6 +139,7 @@ jobs:
       VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
       VAULT_KMS_KEY_ARN: ${{ vars.VAULT_KMS_KEY_ARN }}
       ANSIBLE_SSM_BUCKET: ${{ vars.VAULT_SSM_BUCKET }}
+      VAULT_AUTOMATION_READY: ${{ vars.VAULT_AUTOMATION_READY }}
       VAULT_ADDR: https://127.0.0.1:18200
       VAULT_CACERT: ${{ github.workspace }}/.vault-lab/certs/${{ vars.VAULT_INSTANCE_ID }}.pem
       LOCAL_BOOTSTRAP_FILE: ${{ github.workspace }}/.vault-lab/bootstrap/vault-payload.json
@@ -175,6 +181,12 @@ jobs:
         env:
           LOCAL_RECOVERY_PAYLOAD: ${{ secrets.LOCAL_RECOVERY_PAYLOAD }}
         run: python scripts/vault/restore_local.py prepare
+      - name: Resume existing workers and wait for persistent storage
+        run: |
+          python scripts/vault/resume_lab.py --instance-id "$VAULT_INSTANCE_ID"
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          python scripts/vault/recover_initial_workers.py
+          python scripts/vault/require_automation.py cluster
       - name: Install Vault and configure its persistent native KMS seal
         working-directory: ansible
         run: |
@@ -193,11 +205,7 @@ jobs:
               stream.write('ca=' + base64.b64encode(certificate).decode() + '\n')
           PY
       - name: Verify the real KMS restart through the TLS tunnel
-        run: |
-          umask 077
-          python scripts/vault/ssm_tunnel.py --instance-id "$VAULT_INSTANCE_ID" \
-            --pid-file "$RUNNER_TEMP/vault-tunnel.pid" > "$RUNNER_TEMP/vault-tunnel.log" 2>&1 &
-          python scripts/vault/require_automation.py runtime
+        run: bash scripts/vault/tunnel.sh start
       - name: Verify actual GitHub OIDC and read the preserved local application settings
         id: vault
         uses: hashicorp/vault-action@v3
@@ -229,6 +237,7 @@ jobs:
           aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
           python scripts/vault/restore_local.py restore
       - name: Save only encrypted custody and public verification records
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: local-bootstrap-verification
@@ -236,28 +245,25 @@ jobs:
             .vault-lab/bootstrap/vault-custody.tar.gpg
             .vault-lab/bootstrap/vault-verified.json
             .vault-lab/bootstrap/database-verified.json
+            .vault-lab/bootstrap/oidc-verified.json
+            .vault-lab/bootstrap/bootstrap-verified.json
           include-hidden-files: true
-          retention-days: 3
-      - name: Close SSM and remove the one-time private inputs
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
+      - name: Close the SSM session
+        if: always()
+        run: bash scripts/vault/tunnel.sh stop
+      - name: Remove the one-time private inputs
         if: always()
         run: |
-          if [[ -f "$RUNNER_TEMP/vault-tunnel.pid" ]]; then
-            kill -TERM "$(cat "$RUNNER_TEMP/vault-tunnel.pid")" 2>/dev/null || true
-            for attempt in {1..45}; do
-              [[ ! -f "$RUNNER_TEMP/vault-tunnel.pid" ]] && break
-              sleep 1
-            done
-          fi
-          if [[ -f "$RUNNER_TEMP/vault-tunnel.session" ]]; then
-            aws ssm terminate-session --region us-east-1 --session-id "$(cat "$RUNNER_TEMP/vault-tunnel.session")" >/dev/null
-          fi
           python - <<'PY'
           from pathlib import Path
           for name in ('local-payload.json', 'vault-payload.json'):
               (Path('.vault-lab/bootstrap') / name).unlink(missing_ok=True)
           PY
   release:
-    if: inputs.operation != 'initialize-local-data' && inputs.operation != 'inspect-worker' && inputs.operation != 'worker-restart'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'release')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -312,6 +318,12 @@ jobs:
     uses: ./.github/workflows/ci-postgres-integration.yaml
     with:
       ref: ${{ needs.release.outputs.image_tag }}
+  code-tests:
+    needs: release
+    if: needs.release.outputs.deploy == 'true'
+    uses: ./.github/workflows/ci-code-tests.yaml
+    with:
+      ref: ${{ needs.release.outputs.image_tag }}
   vault-security:
     needs: release
     if: needs.release.outputs.deploy == 'true'
@@ -319,7 +331,7 @@ jobs:
     with:
       ref: ${{ needs.release.outputs.image_tag }}
   build-and-push:
-    needs: [release, requirements, integration, vault-security]
+    needs: [release, requirements, code-tests, integration, vault-security]
     if: needs.release.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
     strategy:
@@ -381,3 +393,37 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+  release-summary:
+    needs: [release, requirements, code-tests, integration, vault-security, build-and-push, deploy]
+    if: always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.operation == 'release')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report the actual release outcome
+        env:
+          AUTHORIZED: ${{ needs.release.outputs.deploy }}
+          RELEASE_SHA: ${{ needs.release.outputs.image_tag }}
+          GATE_RESULT: ${{ needs.release.result }}
+          REQUIREMENTS_RESULT: ${{ needs.requirements.result }}
+          TESTS_RESULT: ${{ needs.code-tests.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          VAULT_RESULT: ${{ needs.vault-security.result }}
+          BUILD_RESULT: ${{ needs.build-and-push.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        run: |
+          {
+            echo '## AWS release'
+            echo "SHA: $RELEASE_SHA"
+            echo "Authorization: $GATE_RESULT; build: $BUILD_RESULT; deployment and smoke: $DEPLOY_RESULT"
+            echo "Requirements: $REQUIREMENTS_RESULT; unit tests: $TESTS_RESULT; PostgreSQL integration: $INTEGRATION_RESULT; Vault checks: $VAULT_RESULT"
+            if [[ "$AUTHORIZED" != true ]]; then
+              echo 'No application deployment was authorized for this event.'
+            elif [[ "$DEPLOY_RESULT" == success ]]; then
+              echo 'Application deployment and functional smoke passed.'
+            elif [[ "$REQUIREMENTS_RESULT" == failure ]]; then
+              echo 'Deployment prerequisites failed. Check the requirements job: flags remain false until the one-time bootstrap proves PostgreSQL recovery and real OIDC. Renewing AWS secrets alone does not verify recovery.'
+            else
+              echo 'Deployment is incomplete. Inspect the failed stage; renew all three AWS secrets if the Lab session expired.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$GATE_RESULT" == success ]]
+          [[ "$AUTHORIZED" != true || "$DEPLOY_RESULT" == success ]]

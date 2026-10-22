@@ -3,7 +3,7 @@ on:
   pull_request:
     paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   push:
-    branches: [main]
+    branches: [main, development]
     paths: ['scripts/aws/**', 'scripts/vault/**', 'scripts/operations_report.py', 'scripts/tests/**', 'infrastructure/vault/**', 'ansible/**', 'terraform/aws/vault/**', 'helm-chart/**', '.github/workflows/ci-vault.yaml', '.github/workflows/cd-helm-eks.yaml', '.github/workflows/ci-docker-ecr.yaml']
   workflow_dispatch: {}
   workflow_call:
@@ -62,3 +62,4 @@ jobs:
         run: |
           bash -n scripts/vault/install-ssm-plugin.sh
           bash -n scripts/vault/rebuild-lab.sh
+          bash -n scripts/vault/tunnel.sh

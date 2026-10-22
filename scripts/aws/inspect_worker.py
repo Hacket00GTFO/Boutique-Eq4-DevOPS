@@ -71,7 +71,7 @@ def restart_unjoined_workers(report, call=aws, execute=subprocess.run):
     print('PASS: reboot requested for the three owned unjoined workers; all volumes and Vault were retained.')
 
 
-def main(restart=False):
+def main(restart=False, emit=True):
     if aws('sts', 'get-caller-identity')['Account'] != ACCOUNT:
         raise PreparationError('Worker inspection requires the configured account.')
     node = aws('eks', 'describe-nodegroup', '--cluster-name', 'boutique-eq4-eks',
@@ -103,10 +103,11 @@ def main(restart=False):
             continue
         if result['Status'] == 'Success':
             report = {'instance': target, 'startup': json.loads(result['StandardOutputContent'])}
-            print(json.dumps(report, indent=2))
+            if emit:
+                print(json.dumps(report, indent=2))
             if restart:
                 restart_unjoined_workers(report)
-            return
+            return report
         if result['Status'] in ('Failed', 'Cancelled', 'TimedOut'):
             raise PreparationError('The read-only startup probe failed; private command output suppressed.')
         time.sleep(2)
