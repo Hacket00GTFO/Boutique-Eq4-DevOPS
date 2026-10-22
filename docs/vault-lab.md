@@ -337,6 +337,34 @@ tokens raíz. Sustituir la clave PGP inaccesible mediante una ceremonia de rekey
 con verificación, conservar las participaciones anteriores hasta completar esa
 ceremonia y renovar las copias cifradas de custodia.
 
+Para Vault con KMS nativo, usar el `init.json` de la custodia de **esa misma
+instalación**, conservada en el artefacto `local-bootstrap-verification`.
+El archivo exterior y cada participación están cifrados con PGP. Descifrar el
+contenedor en memoria y conservar únicamente el miembro regular `init.json`
+en un directorio 0700, archivo 0600, fuera de Git. No imprimir su contenido ni
+extraer el snapshot en texto claro. El helper selecciona `recovery_keys_base64`
+para KMS nuevo y conserva compatibilidad con participaciones Shamir después de
+una migración KMS completada; rechaza migraciones pendientes y custodia incompleta.
+
+Si el propósito es reparar la confianza OIDC, después de confirmar el cierre
+de la ventana ejecutar, con el mismo túnel y las claves aún desbloqueadas:
+
+```bash
+python scripts/vault/repair_github_oidc.py \
+  --root-file "$RECOVERED_ROOT" \
+  --gpg-home "$HOME/vault-custody/gnupg" \
+  --repo Hacket00GTFO/Boutique-Eq4-DevOPS \
+  --repository-id 1333737803 --owner-id 181441407
+```
+
+El root recuperado se descifra solo en memoria. Emite un operador de quince
+minutos, sin política `root` ni política predeterminada, comprueba sus límites
+y revoca el root antes de actualizar la confianza. El operador se revoca al
+terminar, incluso si la configuración del rol falla. Un error de revocación
+detiene la operación y requiere comprobar la sesión antes de reintentar.
+La escritura verificada del rol no acredita el login real de GitHub: esa prueba
+sigue siendo obligatoria dentro del bootstrap antes de activar CD.
+
 Referencias: [configuración de acceso de recuperación](https://developer.hashicorp.com/vault/docs/configuration#enable_unauthenticated_access)
 y [API de generación por quorum](https://developer.hashicorp.com/vault/api-docs/system/generate-root).
 

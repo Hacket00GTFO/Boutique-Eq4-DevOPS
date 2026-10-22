@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SafeError
-from recover_root import recovery_window
+from recover_root import encrypted_shares, recovery_window
 
 
 class AccessState:
@@ -24,6 +24,26 @@ class AccessState:
 
 
 class RecoveryWindowTests(unittest.TestCase):
+    def test_selects_recovery_shares_for_fresh_kms_and_preserves_migrated_shares(self):
+        recovery = ['encrypted-recovery-1', 'encrypted-recovery-2', 'encrypted-recovery-3']
+        old = ['encrypted-old-1', 'encrypted-old-2', 'encrypted-old-3']
+        kms = {'type': 'awskms', 'recovery_seal': True}
+        self.assertEqual(encrypted_shares({'keys_base64': [], 'recovery_keys_base64': recovery}, kms), recovery)
+        self.assertEqual(encrypted_shares({'keys_base64': old}, kms), old)
+        self.assertEqual(encrypted_shares({'keys_base64': old, 'recovery_keys_base64': recovery}, kms), recovery)
+        self.assertEqual(encrypted_shares({'keys_base64': old}, {'type': 'shamir'}), old)
+
+    def test_invalid_custody_or_seal_never_opens_recovery(self):
+        for material, seal in (
+            ({'recovery_keys_base64': ['one']}, {'type': 'awskms', 'recovery_seal': True}),
+            ({'recovery_keys_base64': ['one', '', 'three']}, {'type': 'awskms', 'recovery_seal': True}),
+            ({'recovery_keys_base64': ['one', 'two', 'three']}, {'type': 'shamir'}),
+            ({'keys_base64': ['one', 'two', 'three']}, {'type': 'awskms', 'recovery_seal': False}),
+            ({'keys_base64': ['one', 'two', 'three']}, {'type': 'shamir', 'migration': True}),
+        ):
+            with self.subTest(seal=seal), self.assertRaises(SafeError):
+                encrypted_shares(material, seal)
+
     def test_interrupt_closes_access(self):
         state = AccessState()
         with redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
