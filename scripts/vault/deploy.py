@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 from common import DB_KEYS, KEYS, SafeError, validate_values
+from recovery_evidence import require_recovery
 
 NAMESPACE = 'boutique-vault-lab'
 RELEASE = 'boutique-vault-lab'
@@ -97,6 +98,7 @@ def deploy(values, registry, image_tag, revision):
     pvcs = json.loads(kubectl('get', 'pvc', '-o', 'json'))['items']
     if pvcs and not previous:
         raise SafeError('Persistent data exists without its original Secret. Restore custody before deploying.')
+    require_recovery(kubectl)
     releases = json.loads(run(['helm', 'list', '-n', NAMESPACE, '--all', '-o', 'json']))
     current = next((r for r in releases if r['name'] == RELEASE), None)
     if current and current['status'] != 'deployed':
