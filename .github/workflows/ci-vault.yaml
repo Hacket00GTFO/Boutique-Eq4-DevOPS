@@ -62,4 +62,3 @@ jobs:
         run: |
           bash -n scripts/vault/install-ssm-plugin.sh
           bash -n scripts/vault/rebuild-lab.sh
-          bash -n scripts/vault/tunnel.sh
