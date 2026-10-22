@@ -19,10 +19,6 @@ class SafeError(Exception):
     """Only fixed, non-sensitive diagnostics may be printed by CLI entrypoints."""
 
 
-class VaultUnavailable(SafeError):
-    """A transient connection or native auto-unseal state, safe to retry."""
-
-
 def validate_values(values):
     if not isinstance(values, dict) or any(not isinstance(values.get(k), str) or
                                          not values[k].strip() for k in KEYS):
@@ -97,23 +93,14 @@ class Vault:
         except urllib.error.HTTPError as exc:
             try:
                 if exc.code in allowed:
-                    raw = exc.read()
-                    return exc.code, json.loads(raw) if raw else {}
+                    return exc.code, {}
                 raise SafeError(f'Vault request failed (HTTP {exc.code}); no response body was logged.') from None
             finally:
                 exc.close()
-        except ssl.SSLError:
-            raise SafeError('Vault TLS verification or handshake failed; verify the SSM certificate.') from None
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, ssl.SSLError):
-                raise SafeError('Vault TLS verification or handshake failed; verify the SSM certificate.') from None
-            raise VaultUnavailable('Vault connection is not ready.') from None
-        except (ConnectionError, TimeoutError):
-            raise VaultUnavailable('Vault connection is not ready.') from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise SafeError('Vault is unreachable or TLS verification failed.') from None
 
     def ready(self):
-        _, health = self.request('GET', 'sys/health', allowed=(200, 503))
-        if not health.get('initialized'):
-            raise SafeError('Vault must already be initialized.')
-        if health.get('sealed', True):
-            raise VaultUnavailable('Vault is sealed; waiting for native auto-unseal.')
+        _, health = self.request('GET', 'sys/health')
+        if not health.get('initialized') or health.get('sealed', True):
+            raise SafeError('Vault must be initialized and unsealed.')
