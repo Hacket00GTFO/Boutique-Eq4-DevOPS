@@ -1,12 +1,15 @@
 """Mandatory recovery, native KMS and verified TLS gates for the deployment."""
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
+import time
 
-from common import SafeError, Vault
+from common import SafeError, Vault, VaultUnavailable
 from resume_lab import aws
+from tunnel_state import require_process, wait_tunnel
 
 ACCOUNT = '716142453772'
 
@@ -49,12 +52,73 @@ def runtime(vault=None):
     print('PASS: Vault ready through verified TLS with the native AWS KMS seal.')
 
 
+def await_runtime(vault=None, timeout=120, watchdog=lambda: None, clock=time.monotonic, sleep=time.sleep):
+    client = vault or Vault()
+    deadline = clock() + timeout
+    while True:
+        watchdog()
+        try:
+            runtime(client)
+            watchdog()
+            return
+        except VaultUnavailable:
+            if clock() >= deadline:
+                raise SafeError('Vault readiness timed out after SSM opened; check native KMS auto-unseal.') from None
+            sleep(min(2, max(0, deadline - clock())))
+
+
+def read_nodes():
+    result = subprocess.run(['kubectl', 'get', 'nodes', '-o', 'json'], capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise SafeError('Cannot read EKS nodes; verify the active credentials and cluster access.')
+    return json.loads(result.stdout)
+
+
+def cluster(read=read_nodes, call=aws, sleep=time.sleep, attempts=120):
+    groups = {'boutique-eq4-eks-nodes', 'boutique-eq4-eks-storage'}
+    previous = None
+    for attempt in range(attempts):
+        nodes = [n for n in read().get('items', [])
+                 if n.get('metadata', {}).get('labels', {}).get('eks.amazonaws.com/nodegroup') in groups]
+        ready = [n for n in nodes if any(c.get('type') == 'Ready' and c.get('status') == 'True'
+                                        for c in n.get('status', {}).get('conditions', []))]
+        storage = any(n['metadata']['labels'].get('boutique.dev/node-purpose') == 'storage-controller' for n in ready)
+        progress = (len(nodes), len(ready), storage)
+        if progress != previous:
+            print(f'EKS: registered={len(nodes)}, Ready={len(ready)}, storage Ready={storage}.', flush=True)
+            previous = progress
+        if len(nodes) >= 3 and len(ready) == len(nodes) and storage:
+            break
+        if attempt == attempts - 1:
+            raise SafeError('The three expected EKS workers and storage node did not become Ready.')
+        sleep(5)
+    for attempt in range(attempts):
+        addon = call('eks', 'describe-addon', '--cluster-name', 'boutique-eq4-eks',
+                     '--addon-name', 'aws-ebs-csi-driver')['addon']
+        if addon['status'] == 'ACTIVE':
+            print('PASS: expected EKS nodes Ready; EBS CSI ACTIVE.')
+            return
+        if addon['status'] in ('CREATE_FAILED', 'DELETE_FAILED', 'DELETING'):
+            raise SafeError('EBS CSI requires recovery; persistent data was retained.')
+        if attempt != attempts - 1:
+            sleep(5)
+    raise SafeError('EBS CSI did not become ACTIVE after the workers recovered.')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=['configuration', 'cloud', 'runtime'])
+    parser.add_argument('phase', choices=['configuration', 'cloud', 'cluster', 'runtime'])
+    parser.add_argument('--tunnel-pid', type=int)
+    parser.add_argument('--ready-file')
     try:
-        phase = parser.parse_args().phase
-        {'configuration': configuration, 'cloud': cloud, 'runtime': runtime}[phase]()
+        args = parser.parse_args()
+        if args.phase == 'runtime' and (args.tunnel_pid or args.ready_file):
+            if not args.tunnel_pid or not args.ready_file:
+                raise SafeError('Supply both the SSM supervisor PID and its readiness file.')
+            wait_tunnel(args.ready_file, args.tunnel_pid)
+            await_runtime(watchdog=lambda: require_process(args.tunnel_pid))
+        else:
+            {'configuration': configuration, 'cloud': cloud, 'cluster': cluster, 'runtime': runtime}[args.phase]()
     except SafeError as exc:
         sys.exit('Deployment prerequisite failed: ' + str(exc))
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
