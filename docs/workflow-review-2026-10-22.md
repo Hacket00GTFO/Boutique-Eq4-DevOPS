@@ -62,3 +62,31 @@ Tras un bootstrap correcto y la activación verificada, se necesita una release
 con Helm y smoke aprobados y otra en una sesión posterior renovando solo los
 tres secrets AWS. La recuperación inicial preparada aquí aún no fue ejecutada
 contra AWS; sus controles se probaron sin reiniciar instancias reales.
+
+## Seguimiento tras el PR #56
+
+El [merge del PR #56](https://github.com/Hacket00GTFO/Boutique-Eq4-DevOPS/actions/runs/39894996500)
+contiene la corrección OIDC en `main` (`9b0a5017`). Aprobaron requisitos,
+pruebas unitarias, integración, seguridad y las doce publicaciones de imágenes.
+CD falló esperando nodos: `registered=0, Ready=0, storage Ready=False`.
+El resumen propagó ese mismo fallo. Las cinco operaciones manuales se omitieron
+correctamente en el evento push.
+
+El [diagnóstico por SSM](https://github.com/Hacket00GTFO/Boutique-Eq4-DevOPS/actions/runs/39897194426)
+confirma `nodeadm-config=failed`, kubelet/containerd inactivos y permiso actual
+`ec2:DescribeInstances` aprobado. El [inventario](https://github.com/Hacket00GTFO/Boutique-Eq4-DevOPS/actions/runs/39897201030)
+confirma grupos ACTIVE, roles mapeados, cero nodos y EBS CSI DEGRADED por ausencia
+de trabajadores. Las tres instancias fueron reemplazadas; el volumen EBS de
+PostgreSQL permanece disponible.
+
+La recuperación anterior estaba acotada al bootstrap, antes de activar CD y
+sin namespace de aplicación. La corrección posterior incorpora una recuperación
+separada para sesiones del Lab con datos ya verificados: solo cero nodos,
+identidad de almacenamiento original, tres trabajadores propios en servicio,
+fallo conocido de nodeadm y permiso actual confirmado. Comprueba otra vez esos
+límites antes del reinicio. Las migraciones y restauraciones no forman parte de
+esa recuperación. El workflow identifica este paso por separado de la consulta
+de imágenes y explica en su resumen las omisiones de mantenimiento previstas.
+
+Los cambios de este seguimiento se publican exclusivamente en development.
+Su prueba operativa en main requiere el PR manual del responsable del repositorio.

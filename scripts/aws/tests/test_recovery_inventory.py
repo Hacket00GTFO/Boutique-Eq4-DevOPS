@@ -8,10 +8,35 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from recovery_inventory import finish, query, kubernetes_inventory
+from recovery_inventory import finish, query, kubernetes_inventory, application_inventory
 
 
 class RecoveryInventoryTests(unittest.TestCase):
+    def test_application_inventory_reads_only_public_storage_identity_and_pod_state(self):
+        marker = {'data': {'dump_sha256': 'a' * 64, 'volume_handle': 'vol-1', 'private': 'private-marker'}}
+        pvc = {'metadata': {'uid': 'claim-1', 'annotations': {'private': 'private-marker'}},
+               'status': {'phase': 'Bound'}, 'spec': {'storageClassName': 'boutique-ebs-gp3', 'volumeName': 'pv-1'}}
+        pv = {'spec': {'claimRef': {'uid': 'claim-1'}, 'csi': {'driver': 'ebs.csi.aws.com', 'volumeHandle': 'vol-1'}}}
+        pods = {'items': [{'metadata': {'name': 'postgres-0'}, 'status': {'phase': 'Pending'},
+                           'spec': {'containers': [{'env': [{'value': 'private-marker'}]}]}}]}
+        outputs = iter([{'metadata': {'name': 'boutique-vault-lab'}}, marker, pvc, pv, pods])
+        calls = []
+        def execute(args):
+            calls.append(args)
+            return {'output': json.dumps(next(outputs))}
+        result = application_inventory(execute)
+        self.assertTrue(result['namespace_present'])
+        self.assertEqual(result['pvc']['uid'], result['pv']['claim_uid'])
+        self.assertEqual(result['pv']['volume_handle'], result['recovery']['volume_handle'])
+        self.assertNotIn('private-marker', json.dumps(result))
+        self.assertFalse(any('secret' in call for call in calls))
+
+    def test_missing_namespace_does_not_attempt_to_read_any_application_objects(self):
+        from unittest.mock import Mock
+        execute = Mock(return_value={'output': ''})
+        self.assertEqual(application_inventory(execute), {'namespace_present': False})
+        execute.assert_called_once()
+
     def test_canceled_session_diagnostic_never_forwards_private_aws_body(self):
         result = subprocess.CompletedProcess([], 1, '',
             'An error occurred (AccessDeniedException): private-request-body voc-cancel-cred')

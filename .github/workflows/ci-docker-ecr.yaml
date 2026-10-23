@@ -415,12 +415,15 @@ jobs:
             echo "SHA: $RELEASE_SHA"
             echo "Authorization: $GATE_RESULT; build: $BUILD_RESULT; deployment and smoke: $DEPLOY_RESULT"
             echo "Requirements: $REQUIREMENTS_RESULT; unit tests: $TESTS_RESULT; PostgreSQL integration: $INTEGRATION_RESULT; Vault checks: $VAULT_RESULT"
+            echo 'Manual maintenance jobs are expected to be skipped on a merge: recovery-inventory, inspect-worker, prepare-vault-kms, rebuild-infrastructure and initialize-local-data.'
             if [[ "$AUTHORIZED" != true ]]; then
               echo 'No application deployment was authorized for this event.'
             elif [[ "$DEPLOY_RESULT" == success ]]; then
               echo 'Application deployment and functional smoke passed.'
             elif [[ "$REQUIREMENTS_RESULT" == failure ]]; then
               echo 'Deployment prerequisites failed. Check the requirements job: flags remain false until the one-time bootstrap proves PostgreSQL recovery and real OIDC. Renewing AWS secrets alone does not verify recovery.'
+            elif [[ "$DEPLOY_RESULT" == failure ]]; then
+              echo 'Deployment failed; this summary propagates that failure. Inspect the failed CD step for worker readiness, OIDC or delivery diagnostics.'
             else
               echo 'Deployment is incomplete. Inspect the failed stage; renew all three AWS secrets if the Lab session expired.'
             fi
