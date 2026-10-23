@@ -83,6 +83,14 @@ jobs:
           python -m pip install -r ansible/requirements.txt
           ansible-galaxy collection install -r ansible/requirements.yml
           bash scripts/vault/install-ssm-plugin.sh
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.9
+      - name: Recover failed Lab worker startup and wait for EKS storage
+        run: |
+          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
+          python scripts/vault/recover_lab_workers.py
+          python scripts/vault/require_automation.py cluster
       - name: Apply persistent Vault configuration through Ansible
         working-directory: ansible
         env:
@@ -106,20 +114,15 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.22.1
-      - uses: azure/setup-kubectl@v4
-        with:
-          version: v1.35.9
       - name: Resolve ECR registry
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Verify images and persistent storage driver
+      - name: Verify the twelve release images and application namespace
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         shell: bash
         run: |
           set -euo pipefail
-          aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
-          python scripts/vault/require_automation.py cluster
           for service in adservice cartservice catalogservice checkoutservice currencyservice emailservice frontend loadgenerator paymentservice productcatalogservice recommendationservice shippingservice; do
             aws ecr describe-images --repository-name "boutique-eq4/$service" --image-ids "imageTag=$IMAGE_TAG" >/dev/null
           done

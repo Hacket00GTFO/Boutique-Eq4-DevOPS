@@ -25,13 +25,19 @@ def storage_identity(kubectl):
     return {'pvc_uid': pvc['metadata']['uid'], 'volume_name': volume_name, 'volume_handle': csi['volumeHandle']}
 
 
-def require_recovery(kubectl):
+def require_storage_recovery(kubectl):
     marker = json.loads(kubectl('get', 'configmap', 'local-recovery-verified', '-o', 'json')).get('data', {})
     if (marker.get('admin_env_verified') != 'true'
             or not re.fullmatch(r'[0-9a-f]{64}', marker.get('dump_sha256', ''))):
         raise SafeError('The PostgreSQL recovery evidence is missing or incomplete.')
-    if any(marker.get(key) != value for key, value in storage_identity(kubectl).items()):
+    identity = storage_identity(kubectl)
+    if any(marker.get(key) != value for key, value in identity.items()):
         raise SafeError('PostgreSQL no longer uses the verified recovery volume; automatic deployment stopped.')
+    return identity
+
+
+def require_recovery(kubectl):
+    require_storage_recovery(kubectl)
     # This query validates the database itself, without comparing counts that legitimately grow after releases.
     result = kubectl('exec', '-i', 'postgres-0', '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
                      '-U', 'postgres', '-d', 'boutique', '-At',

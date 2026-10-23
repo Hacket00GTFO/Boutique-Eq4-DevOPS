@@ -101,6 +101,13 @@ consultar [Vault y custodia](vault-lab.md).
   el environment, distinta de la cola del workflow padre.
 - Primero se esperan los tres nodos Ready, incluido el nodo de almacenamiento;
   después EBS CSI. SSM y Vault tienen plazos separados de 120 segundos.
+- Si una sesión del Lab dejó los tres trabajadores sin registrar y
+  `nodeadm-config` fallido, CD comprueba primero la identidad del PVC/PV/EBS
+  restaurado, cuenta, VPC, grupos, roles y sus tres instancias en servicio.
+  Comprueba por SSM que el trabajador de almacenamiento sigue sin kubelet ni
+  containerd activos y que el permiso AWS actual funciona. Revalida los
+  trabajadores, el volumen y la ausencia de nodos antes de solicitar un único
+  reinicio de esas tres instancias. Si un nodo se registra, no solicita reinicios.
 - El PVC, el volumen EBS y el esquema deben coincidir con la recuperación
   verificada. La ausencia de datos no inicia una base nueva automáticamente.
 - Helm espera workloads y migraciones. El smoke prueba frontend, administrador,
@@ -139,6 +146,21 @@ Después repetir el bootstrap hasta comprobar el login desde GitHub, restaurar
 PostgreSQL y activar mediante la evidencia de una ejecución exitosa.
 
 ### Prerrequisitos y ejecuciones manuales
+
+En un merge normal, estos cinco jobs aparecen `skipped` por diseño:
+
+| Job | Cuándo se ejecuta |
+| --- | --- |
+| `recovery-inventory` | Diagnóstico manual `operation=inventory` en development |
+| `inspect-worker` | Diagnóstico o recuperación inicial manual en development |
+| `prepare-vault-kms` | Preparación manual de KMS en development |
+| `rebuild-infrastructure` | Reconstrucción inicial explícita en main |
+| `initialize-local-data` | Restauración inicial explícita en main, antes de activar CD |
+
+La recuperación acotada del arranque durante una release forma parte del job
+CD; no reactiva la restauración inicial ni el job de reconstrucción.
+`release-summary` propaga un fallo de despliegue para que el workflow completo
+no declare éxito si la aplicación no pasó la entrega y el smoke.
 
 Un `requirements` fallido con `Application data recovery is not verified`
 indica que la preparación inicial sigue pendiente. Ese control ocurre antes de

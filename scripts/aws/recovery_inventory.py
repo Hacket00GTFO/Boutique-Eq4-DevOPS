@@ -8,6 +8,43 @@ import sys
 ACCOUNT = '716142453772'
 
 
+def application_inventory(execute):
+    namespace = 'boutique-vault-lab'
+    response = execute(['kubectl', 'get', 'namespace', namespace, '--ignore-not-found', '-o', 'json', '--request-timeout=30s'])
+    if response.get('unavailable'):
+        return response
+    if not response['output'].strip():
+        return {'namespace_present': False}
+    result = {'namespace_present': True}
+    for kind, name in (('configmap', 'local-recovery-verified'), ('pvc', 'data-postgres-0')):
+        response = execute(['kubectl', '-n', namespace, 'get', kind, name, '--ignore-not-found', '-o', 'json', '--request-timeout=30s'])
+        if response.get('unavailable'):
+            result[kind] = response
+            continue
+        item = json.loads(response['output']) if response['output'].strip() else {}
+        if kind == 'configmap':
+            result['recovery'] = {key: item.get('data', {}).get(key) for key in
+                ('admin_env_verified', 'dump_sha256', 'pvc_uid', 'volume_name', 'volume_handle')}
+        else:
+            result['pvc'] = {'uid': item.get('metadata', {}).get('uid'), 'phase': item.get('status', {}).get('phase'),
+                             'storage_class': item.get('spec', {}).get('storageClassName'),
+                             'volume_name': item.get('spec', {}).get('volumeName')}
+    volume = result.get('pvc', {}).get('volume_name')
+    if volume:
+        response = execute(['kubectl', 'get', 'pv', volume, '-o', 'json', '--request-timeout=30s'])
+        if response.get('unavailable'):
+            result['pv'] = response
+        else:
+            spec = json.loads(response['output']).get('spec', {})
+            result['pv'] = {'claim_uid': spec.get('claimRef', {}).get('uid'),
+                            'driver': spec.get('csi', {}).get('driver'), 'volume_handle': spec.get('csi', {}).get('volumeHandle')}
+    response = execute(['kubectl', '-n', namespace, 'get', 'pods', '-o', 'json', '--request-timeout=30s'])
+    result['pods'] = response if response.get('unavailable') else [
+        {'name': item['metadata']['name'], 'phase': item.get('status', {}).get('phase'), 'node': item.get('spec', {}).get('nodeName')}
+        for item in json.loads(response['output']).get('items', [])]
+    return result
+
+
 def kubernetes_inventory(name, roles=()):
     def execute(args):
         result = subprocess.run(args, capture_output=True, text=True, timeout=45, check=False)
@@ -44,7 +81,8 @@ def kubernetes_inventory(name, roles=()):
         'present': True,
         'expected_roles_mapped': {role: role in json.loads(response['output']).get('data', {}).get('mapRoles', '')
                                   for role in roles}}
-    return {'nodes': nodes, 'system_pods': pods, 'node_auth_mapping': auth}
+    return {'nodes': nodes, 'system_pods': pods, 'node_auth_mapping': auth,
+            'application': application_inventory(execute)}
 
 
 def query(*args):
