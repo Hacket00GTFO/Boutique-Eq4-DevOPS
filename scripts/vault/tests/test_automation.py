@@ -74,7 +74,7 @@ class AutomationTests(unittest.TestCase):
 
     def test_github_trust_binds_numeric_ownership_main_environment_and_workflow(self):
         role = role_configuration('owner/repo', 123, 456)
-        self.assertEqual(role['bound_subject'], 'repo:owner/repo:environment:vault-lab')
+        self.assertEqual(role['bound_subject'], 'repo:owner@456/repo@123:environment:vault-lab')
         self.assertEqual(role['bound_claims']['ref'], 'refs/heads/main')
         self.assertEqual(role['bound_claims']['repository_id'], '123')
         self.assertEqual(role['bound_claims']['repository_owner_id'], '456')

@@ -50,11 +50,15 @@ def check_recipient(recipient, home):
 def toggle_access(instance, enabled):
     variables = {'vault_recovery_instance': instance,
                  'vault_recovery_enabled': enabled}
+    directory = Path(__file__).resolve().parents[2] / 'ansible'
     try:
         subprocess.run(
             ['ansible-playbook', 'root-recovery.yml', '--limit', instance,
              '--extra-vars', json.dumps(variables)],
-            cwd=Path(__file__).resolve().parents[2] / 'ansible',
+            cwd=directory,
+            # DrvFS may report the Windows checkout as world writable. Ansible
+            # then ignores implicit configuration, including the SSM inventory.
+            env=dict(os.environ, ANSIBLE_CONFIG=str(directory / 'ansible.cfg')),
             check=True, timeout=300)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         raise SafeError('Ansible could not apply the recovery access setting.') from None
@@ -97,6 +101,23 @@ def save_result(output, document):
         os.fsync(stream.fileno())
 
 
+def encrypted_shares(material, seal):
+    if seal.get('migration'):
+        raise SafeError('Complete the seal migration before generating a root token.')
+    if seal.get('type') == 'shamir':
+        shares = material.get('keys_base64')
+    elif seal.get('type') == 'awskms' and seal.get('recovery_seal'):
+        # Fresh auto-unseal installations return recovery_keys_base64. A completed
+        # Shamir migration retains the original encrypted shares as recovery keys.
+        shares = material.get('recovery_keys_base64') or material.get('keys_base64')
+    else:
+        raise SafeError('Recovery requires a known Shamir or native AWS KMS seal.')
+    if (not isinstance(shares, list) or len(shares) != 3
+            or any(not isinstance(share, str) or not share for share in shares)):
+        raise SafeError('The custody file does not contain three encrypted shares for this seal.')
+    return shares
+
+
 def recover(vault, init_file, indices, recipient, output, home, toggle):
     vault.ready()
     _, seal = vault.request('GET', 'sys/seal-status')
@@ -105,14 +126,13 @@ def recover(vault, init_file, indices, recipient, output, home, toggle):
         raise SafeError('This lab helper requires the expected two-of-three quorum.')
     if len(indices) != 2 or len(set(indices)) != 2 or any(i not in (1, 2, 3) for i in indices):
         raise SafeError('Select two different share numbers from 1, 2 and 3.')
-    if len(material.get('keys_base64', [])) != 3:
-        raise SafeError('The custody file does not contain three encrypted shares.')
+    encrypted = encrypted_shares(material, seal)
 
     shares = []
     for index in indices:
         print(f'Decrypting share {index}; use its custodian passphrase if prompted.', flush=True)
         shares.append(decrypt_pgp(base64.b64decode(
-            material['keys_base64'][index - 1], validate=True), home))
+            encrypted[index - 1], validate=True), home))
     print('Checking that the selected recipient can recover the new token.', flush=True)
     check_recipient(recipient, home)
     public_key = recipient.read_bytes()

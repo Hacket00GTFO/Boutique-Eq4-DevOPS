@@ -114,6 +114,32 @@ separado y conserva su configuración inicial `TF_STATE_BUCKET`.
 
 ## Reintentos y diagnóstico
 
+### Identidad OIDC inmutable de este repositorio
+
+La configuración pública de GitHub para este repositorio devuelve
+`use_immutable_subject=true`. El rol de Vault debe exigir exactamente:
+
+```text
+repo:Hacket00GTFO@181441407/Boutique-Eq4-DevOPS@1333737803:environment:vault-lab
+```
+
+El formato anterior sin IDs provoca `invalid subject (sub) claim`. La corrección
+conserva los controles de audiencia, IDs numéricos, rama `main`, environment,
+workflows autorizados y tokens de CI de lectura con un máximo de quince minutos.
+No cambiar la configuración de GitHub al formato anterior para eludir el fallo.
+El formato se documenta en [OIDC de GitHub](https://docs.github.com/en/actions/reference/security/oidc).
+
+Si Vault ya estaba inicializado con el subject anterior, actualizar el código
+no modifica su rol existente: la inicialización conserva su estado verificado.
+Se necesita una sesión de operador una sola vez. La actualización acepta
+únicamente el rol del mismo repositorio y propietario, con los mismos IDs;
+rechaza subjects ajenos y restricciones adicionales que pudieran perderse.
+Consultar la [ceremonia de recuperación](vault-lab.md#recuperar-acceso-cuando-una-clave-pgp-no-se-abre).
+Después repetir el bootstrap hasta comprobar el login desde GitHub, restaurar
+PostgreSQL y activar mediante la evidencia de una ejecución exitosa.
+
+### Prerrequisitos y ejecuciones manuales
+
 Un `requirements` fallido con `Application data recovery is not verified`
 indica que la preparación inicial sigue pendiente. Ese control ocurre antes de
 autenticar en AWS; por sí solo no indica credenciales AWS inválidas. Un

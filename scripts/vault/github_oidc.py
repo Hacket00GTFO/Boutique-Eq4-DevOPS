@@ -18,10 +18,11 @@ def role_configuration(repo, repository_id, owner_id):
         raise SafeError('Supply a repository as owner/name.')
     if not all(re.fullmatch(r'[1-9][0-9]*', str(i)) for i in (repository_id, owner_id)):
         raise SafeError('Supply the numeric repository and owner IDs from GitHub.')
+    owner, name = repo.split('/')
     return {
         'role_type': 'jwt', 'user_claim': 'repository_id',
         'bound_audiences': ['https://github.com/' + repo],
-        'bound_subject': 'repo:' + repo + ':environment:vault-lab',
+        'bound_subject': f'repo:{owner}@{owner_id}/{name}@{repository_id}:environment:vault-lab',
         'bound_claims_type': 'string',
         'bound_claims': {
             'repository_id': str(repository_id), 'repository_owner_id': str(owner_id),
@@ -33,6 +34,20 @@ def role_configuration(repo, repository_id, owner_id):
         'token_type': 'batch', 'token_ttl': 900, 'token_max_ttl': 900,
         'token_explicit_max_ttl': 900,
     }
+
+
+def validate_existing_role(existing, expected, repo):
+    if not existing:
+        return
+    legacy = 'repo:' + repo + ':environment:vault-lab'
+    if existing.get('bound_subject') not in (expected['bound_subject'], legacy):
+        raise SafeError('The deployment role belongs to another subject; refusing to replace it.')
+    claims = existing.get('bound_claims') or {}
+    for name in ('repository_id', 'repository_owner_id'):
+        if claims.get(name) != expected['bound_claims'][name]:
+            raise SafeError('The existing role has a different immutable repository/owner identity; no trust changed.')
+    if set(claims) - set(expected['bound_claims']):
+        raise SafeError('The existing role has additional claim restrictions; preserve them before changing trust.')
 
 
 def configure(vault, repo, repository_id, owner_id):
@@ -49,8 +64,7 @@ def configure(vault, repo, repository_id, owner_id):
                                                  'oidc_discovery_ca_pem'))):
             raise SafeError('The github auth mount has another trust configuration; refusing to replace it.')
         _, existing = vault.request('GET', 'auth/github/role/' + ROLE, allowed=(200, 404))
-        if existing.get('data', {}).get('bound_subject') not in (None, role['bound_subject']):
-            raise SafeError('The deployment role belongs to a different repository; refusing to replace it.')
+        validate_existing_role(existing.get('data', {}), role, repo)
     else:
         vault.request('POST', 'sys/auth/' + MOUNT, {'type': 'jwt', 'description': 'GitHub main deployment identity'})
     vault.request('POST', 'auth/github/config', {
@@ -62,7 +76,7 @@ def configure(vault, repo, repository_id, owner_id):
                  'token_no_default_policy', 'token_type', 'token_explicit_max_ttl'):
         if installed.get(name) != role[name]:
             raise SafeError('Vault did not retain the required GitHub trust or token restrictions.')
-    print('PASS: GitHub main identity configured; CI tokens are issued per job (maximum 15 minutes).')
+    print('PASS: immutable GitHub repository/owner subject configured; main-only CI tokens last at most 15 minutes.')
 
 
 if __name__ == '__main__':
