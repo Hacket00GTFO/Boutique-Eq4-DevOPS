@@ -1,8 +1,7 @@
 # Historical, opt-in ECS deployment (ENABLE_ECS_DEPLOY=true). PostgreSQL uses EKS.
-# Deploy Online Boutique to AWS ECS (EC2 launch type) when a PR from
-# development is merged into main.
+# Manual historical ECS deployment; automatic main releases use EKS.
 #
-# Trigger: a Pull Request from `development` into `main` is closed as merged.
+# Trigger: explicit workflow_dispatch on main with ENABLE_ECS_DEPLOY=true.
 #
 # Pipeline:
 #   1. build-and-push (matrix): build each microservice image and push to ECR
@@ -22,25 +21,11 @@
 name: "Deploy to AWS ECS (Production)"
 
 on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - closed
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - 'kustomize/**'
-      - '.github/workflows/kustomize-build-ci.yaml'
-      - 'terraform/**'
-      - '.github/workflows/terraform-validate-ci.yaml'
-      - 'helm-chart/**'
-      - '.github/workflows/helm-chart-ci.yaml'
+  workflow_dispatch: {}
 
 # Only run one production deploy at a time
 concurrency:
-  group: deploy-aws-prod-${{ github.event.pull_request.number }}
+  group: boutique-legacy-ecs-deploy
   cancel-in-progress: false
 
 jobs:
@@ -48,7 +33,7 @@ jobs:
   # Job 1: Build and push images to ECR (parallel matrix)
   # ---------------------------------------------------------------------------
   build-and-push:
-    if: ${{ vars.ENABLE_ECS_DEPLOY == 'true' && github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'development' }}
+    if: ${{ vars.ENABLE_ECS_DEPLOY == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -389,25 +374,3 @@ jobs:
           done
           echo "Smoke test FAILED: frontend did not return 200 after 10 attempts."
           exit 1
-
-      # ---------------------------------------------------------------------
-      # Comment result on the merged PR
-      # ---------------------------------------------------------------------
-      - name: Comment on PR
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
-        run: |
-          STATUS="${{ job.status }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          if [ -n "${FRONTEND_URL}" ]; then
-            URL_LINE="Frontend: ${FRONTEND_URL}"
-          else
-            URL_LINE="Frontend URL not configured (set FRONTEND_URL variable)."
-          fi
-          gh pr comment "${PR_NUMBER}" --body "🚀 **AWS ECS deploy: ${STATUS}**
-
-          Image tag: \`${{ github.sha }}\`
-          Cluster: \`${{ vars.ECS_CLUSTER_NAME }}\`
-          ${URL_LINE}" || true

@@ -1,5 +1,8 @@
 name: PostgreSQL integration
 on:
+  push:
+    branches: [development]
+    paths: ["src/**", "docker-compose*.yml", "scripts/**", "helm-chart/**", ".github/workflows/ci-postgres-integration.yaml"]
   pull_request:
     paths: ["src/**", "docker-compose*.yml", "scripts/**", "helm-chart/**", ".github/workflows/ci-postgres-integration.yaml"]
   workflow_dispatch: {}
