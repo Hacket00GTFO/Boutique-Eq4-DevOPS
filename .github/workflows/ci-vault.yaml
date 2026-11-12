@@ -17,6 +17,8 @@ jobs:
   security:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      AWS_ACCOUNT_ID: '111122223333' # Fixed test account; never the real Lab variable.
     steps:
       - uses: actions/checkout@v7
         with:

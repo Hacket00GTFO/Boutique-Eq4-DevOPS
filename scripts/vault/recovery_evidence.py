@@ -6,7 +6,8 @@ import re
 
 from common import SafeError
 
-ACCOUNT = '716142453772'
+# Learner Lab account from the AWS_ACCOUNT_ID repository variable; empty fails every check closed.
+ACCOUNT = os.environ.get('AWS_ACCOUNT_ID', '')
 REPO = 'Hacket00GTFO/Boutique-Eq4-DevOPS'
 PVC = 'data-postgres-0'
 

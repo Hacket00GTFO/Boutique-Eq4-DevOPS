@@ -5,11 +5,11 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SafeError
-from require_automation import configuration, cloud, runtime
+from require_automation import ACCOUNT, configuration, cloud, runtime
 
 VALUES = {'DATA_RECOVERY_VERIFIED': 'true', 'VAULT_AUTOMATION_READY': 'true',
           'VAULT_INSTANCE_ID': 'i-12345678', 'VAULT_SSM_BUCKET': 'dedicated-transfer-bucket',
-          'VAULT_KMS_KEY_ARN': 'arn:aws:kms:us-east-1:716142453772:key/12345678-1234-1234-1234-123456789012'}
+          'VAULT_KMS_KEY_ARN': f'arn:aws:kms:us-east-1:{ACCOUNT}:key/12345678-1234-1234-1234-123456789012'}
 
 
 class AutomationRequirementsTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class AutomationRequirementsTests(unittest.TestCase):
         self.assertEqual(call.call_count, 1)
         metadata = {'Arn': VALUES['VAULT_KMS_KEY_ARN'], 'KeyState': 'Disabled',
                     'KeyUsage': 'ENCRYPT_DECRYPT', 'KeySpec': 'SYMMETRIC_DEFAULT'}
-        call = Mock(side_effect=[{'Account': '716142453772'}, {'cluster': {'status': 'ACTIVE'}},
+        call = Mock(side_effect=[{'Account': ACCOUNT}, {'cluster': {'status': 'ACTIVE'}},
                                  {'KeyMetadata': metadata}])
         with self.assertRaisesRegex(SafeError, 'KMS key'):
             cloud(VALUES, call)

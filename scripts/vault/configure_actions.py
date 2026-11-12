@@ -108,6 +108,7 @@ def main():
     if args.activate_from_run is not None:
         if args.activate_from_run <= 0:
             raise SafeError('Supply a valid successful bootstrap run ID.')
+        os.environ.setdefault('AWS_ACCOUNT_ID', api(args.repo, 'actions/variables/AWS_ACCOUNT_ID').get('value', ''))
         from activate_actions import activate
         activate(args.repo, args.activate_from_run, args.custody_dir, api, command, set_value, prepare_environment)
         return

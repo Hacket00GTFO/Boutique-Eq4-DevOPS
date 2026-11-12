@@ -12,7 +12,7 @@ import sys
 from common import KEYS, SafeError, validate_values
 from deploy import NAMESPACE, RELEASE, kubectl, run, secret_manifest
 from local_env import verify_admin
-from recovery_evidence import execution_identity, storage_identity, write_record
+from recovery_evidence import ACCOUNT, execution_identity, storage_identity, write_record
 
 DIRECTORY = Path('.vault-lab/bootstrap')
 
@@ -75,8 +75,8 @@ def restore():
         raise SafeError('Vault initialization evidence does not match this repository and Actions execution.')
     write_record(DIRECTORY, 'oidc-verified.json', dict(identity, oidc_login_verified=True, application_values_verified=True))
     account = run(['aws', 'sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']).strip()
-    if account != '716142453772':
-        raise SafeError('Restoration requires the original Learner Lab account.')
+    if account != ACCOUNT:
+        raise SafeError('Restoration requires the configured Learner Lab account.')
     run(['kubectl', 'apply', '-f', '-'], payload=json.dumps({
         'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': NAMESPACE}}))
     previous = kubectl('get', 'secret', 'boutique-integration', '--ignore-not-found', '-o', 'json')
