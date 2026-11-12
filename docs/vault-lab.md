@@ -243,14 +243,16 @@ Las nuevas pruebas Vault son obligatorias antes del build ECR.
 La verificación funcional reutiliza la suite HTTP/gRPC/PostgreSQL existente
 dentro de catalogservice. Crea productos/pedidos sintéticos, archiva sus SKU,
 prueba login, catálogo y checkout y deja pedidos de demostración. Pago, envío y
-correo siguen usando los simuladores. El frontend queda privado:
+correo siguen usando los simuladores. El frontend se publica por HTTP en el
+Service `frontend-external` (ELB); el enlace aparece en el resumen del CD:
 
 ```bash
-kubectl -n boutique-vault-lab port-forward service/frontend 8080:80
+kubectl -n boutique-vault-lab get service frontend-external
 ```
 
-Abrir `http://localhost:8080`. El modo lab usa cookie no Secure para este túnel
-HTTP local; Vault siempre usa TLS. La contraseña administrativa se consulta
+El modo lab usa cookie no Secure porque el balanceador sirve HTTP sin
+certificado; Vault siempre usa TLS. Ver
+[abrir la aplicación](aws-automatic-deployment.md#abrir-la-aplicación-y-aceptar-la-entrega). La contraseña administrativa se consulta
 mediante la sesión privada de operador en Vault, nunca en logs de Actions.
 
 ## 5. Rotación, fallos y recuperación
