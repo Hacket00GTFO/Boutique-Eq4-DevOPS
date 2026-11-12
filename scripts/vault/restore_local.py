@@ -12,6 +12,7 @@ import sys
 from common import KEYS, SafeError, validate_values
 from deploy import NAMESPACE, RELEASE, kubectl, run, secret_manifest
 from local_env import verify_admin
+from recovery_evidence import execution_identity, storage_identity, write_record
 
 DIRECTORY = Path('.vault-lab/bootstrap')
 
@@ -66,6 +67,13 @@ def restore():
     values = validate_values({key: os.environ.get(key) for key in KEYS})
     if values != data['values']:
         raise SafeError('Vault did not return the exact accepted local application/admin settings.')
+    identity = execution_identity()
+    vault_record = json.loads((DIRECTORY / 'vault-verified.json').read_text())
+    verified_fields = ('kms_restart_verified', 'tls_verified', 'oidc_configured', 'root_token_revoked')
+    if (not all(vault_record.get(field) is True for field in verified_fields)
+            or any(str(vault_record.get(field)) != identity[field] for field in ('repo', 'repository_id', 'owner_id'))):
+        raise SafeError('Vault initialization evidence does not match this repository and Actions execution.')
+    write_record(DIRECTORY, 'oidc-verified.json', dict(identity, oidc_login_verified=True, application_values_verified=True))
     account = run(['aws', 'sts', 'get-caller-identity', '--query', 'Account', '--output', 'text']).strip()
     if account != '716142453772':
         raise SafeError('Restoration requires the original Learner Lab account.')
@@ -93,10 +101,13 @@ def restore():
             'meta.helm.sh/release-name': RELEASE, 'meta.helm.sh/release-namespace': NAMESPACE})
     kubectl('apply', '-f', '-', payload=yaml.safe_dump_all(resources))
     kubectl('rollout', 'status', 'statefulset/postgres', '--timeout=600s', timeout=620)
+    storage = storage_identity(kubectl)
     existing_tables = int(sql("SELECT count(*) FROM pg_tables WHERE schemaname IN ('boutique','public')"))
     if existing_tables:
         marker = kubectl('get', 'configmap', 'local-recovery-verified', '--ignore-not-found', '-o', 'json')
-        if not marker or json.loads(marker).get('data', {}).get('dump_sha256') != data['dump_sha256']:
+        previous_record = json.loads(marker).get('data', {}) if marker else {}
+        if (previous_record.get('dump_sha256') != data['dump_sha256']
+                or any(previous_record.get(key) != value for key, value in storage.items())):
             raise SafeError('PostgreSQL already contains unverified data; no tables were overwritten.')
     else:
         result = subprocess.run(['kubectl', '-n', NAMESPACE, 'exec', '-i', 'postgres-0', '--', 'pg_restore',
@@ -112,12 +123,17 @@ def restore():
         'GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA boutique TO boutique_app; '
         'GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA boutique TO boutique_app;')
     marker = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'local-recovery-verified', 'namespace': NAMESPACE},
-              'data': {'dump_sha256': data['dump_sha256'], 'admin_env_verified': 'true',
+              'data': {'dump_sha256': data['dump_sha256'], 'admin_env_verified': 'true', **storage,
                        'source': 'explicitly accepted local backup; old cloud orders unavailable'}}
     kubectl('apply', '-f', '-', payload=json.dumps(marker))
-    record = {'restoration_verified': True, 'admin_env_verified': True, 'dump_sha256': data['dump_sha256'],
+    record = {**identity, **storage, 'restoration_verified': True, 'admin_env_verified': True, 'dump_sha256': data['dump_sha256'],
               'table_counts': data['table_counts'], 'source': 'accepted local backup'}
-    (DIRECTORY / 'database-verified.json').write_text(json.dumps(record, indent=2))
+    write_record(DIRECTORY, 'database-verified.json', record)
+    write_record(DIRECTORY, 'bootstrap-verified.json', {
+        **record, **{field: True for field in verified_fields}, 'oidc_login_verified': True,
+        'application_values_verified': True,
+        'custody_sha256': hashlib.sha256((DIRECTORY / 'vault-custody.tar.gpg').read_bytes()).hexdigest(),
+    })
     print('PASS: accepted local PostgreSQL backup restored; row counts and original .env administrator verified.')
 
 

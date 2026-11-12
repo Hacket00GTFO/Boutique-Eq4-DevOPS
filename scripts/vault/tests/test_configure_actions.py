@@ -29,7 +29,7 @@ class ConfigureActionsTests(unittest.TestCase):
         self.assertEqual(args, ['gh', 'secret', 'set', 'VAULT_CI_TOKEN', '--repo',
                                 'owner/repo', '--env', 'vault-lab'])
 
-    def test_activation_follows_every_secret_and_trust_setting(self):
+    def test_preparation_never_activates_without_real_github_oidc_evidence(self):
         credentials = {name: 'fixture-' + name for name in actions.AWS_KEYS}
         with patch.object(actions, 'prepare_environment') as prepare, \
                 patch.object(actions, 'set_value') as write, \
@@ -45,7 +45,6 @@ class ConfigureActionsTests(unittest.TestCase):
             call('owner/repo', 'variable', 'VAULT_SSM_BUCKET', 'dedicated-ssm-bucket', environment=True),
             call('owner/repo', 'variable', 'VAULT_KMS_KEY_ARN', 'fixture-kms-key', environment=True),
             call('owner/repo', 'variable', 'AWS_ACCOUNT_ID', '123456789012'),
-            call('owner/repo', 'variable', 'VAULT_AUTOMATION_READY', 'true', environment=True),
         ]
         self.assertEqual(write.call_args_list, expected)
 

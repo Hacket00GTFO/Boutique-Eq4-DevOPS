@@ -86,7 +86,8 @@ def publish(repo, instance, credentials, bucket, account, environment, key_arn):
     path = f'environments/{ENVIRONMENT}/secrets'
     if any(s['name'] == 'VAULT_CI_TOKEN' for s in api(repo, path + '?per_page=100').get('secrets', [])):
         api(repo, path + '/VAULT_CI_TOKEN', 'DELETE')
-    set_value(repo, 'variable', 'VAULT_AUTOMATION_READY', 'true', environment=True)
+    # Configuring trust does not prove that GitHub can authenticate. Activation
+    # is a separate verified-run operation, also usable after fresh KMS initialization.
 
 
 def main():
@@ -95,12 +96,21 @@ def main():
     parser.add_argument('--instance-id')
     parser.add_argument('--expected-account')
     parser.add_argument('--ssm-bucket')
-    parser.add_argument('--rotate-aws-only', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--rotate-aws-only', action='store_true')
+    mode.add_argument('--activate-from-run', type=int)
+    parser.add_argument('--custody-dir', type=Path, default=Path.home() / 'vault-custody')
     parser.add_argument('--migration-journal', type=Path)
     parser.add_argument('--operator-file', type=Path, default=Path.home() / 'vault-custody/operator.json')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*', args.repo):
         raise SafeError('Supply a repository as owner/name.')
+    if args.activate_from_run is not None:
+        if args.activate_from_run <= 0:
+            raise SafeError('Supply a valid successful bootstrap run ID.')
+        from activate_actions import activate
+        activate(args.repo, args.activate_from_run, args.custody_dir, api, command, set_value, prepare_environment)
+        return
     if not args.expected_account and args.rotate_aws_only:
         args.expected_account = api(args.repo, 'actions/variables/AWS_ACCOUNT_ID').get('value', '')
     if not re.fullmatch(r'[0-9]{12}', args.expected_account or ''):
@@ -155,7 +165,7 @@ def main():
     configure(operator, args.repo, repository['id'], repository['owner']['id'])
     publish(args.repo, args.instance_id, credentials, args.ssm_bucket, args.expected_account, environment, journal['key'])
     print('PASS: three repository AWS secrets configured; environment overrides removed.')
-    print('PASS: main-only Vault automation activated; no stored CI token or public certificate variable is needed.')
+    print('PASS: main-only trust prepared. Activation still requires a verified bootstrap run with real OIDC and database recovery.')
 
 
 if __name__ == '__main__':

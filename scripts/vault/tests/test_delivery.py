@@ -42,6 +42,17 @@ class Cluster:
             return json.dumps({'metadata': {'name': 'ebs.csi.aws.com'}})
         if 'get secret' in words:
             return json.dumps(self.previous) if self.previous else ''
+        if 'get configmap local-recovery-verified' in words:
+            return json.dumps({'data': {'dump_sha256': 'a' * 64, 'admin_env_verified': 'true',
+                                       'pvc_uid': 'claim-1', 'volume_name': 'pv-1', 'volume_handle': 'vol-1'}})
+        if 'get pvc data-postgres-0' in words:
+            return json.dumps({'metadata': {'uid': 'claim-1'}, 'status': {'phase': 'Bound'},
+                               'spec': {'storageClassName': 'boutique-ebs-gp3', 'volumeName': 'pv-1'}})
+        if 'get pv pv-1' in words:
+            return json.dumps({'spec': {'claimRef': {'uid': 'claim-1'},
+                                       'csi': {'driver': 'ebs.csi.aws.com', 'volumeHandle': 'vol-1'}}})
+        if 'psql' in args:
+            return 'true\n'
         if 'get pvc' in words:
             return json.dumps({'items': [{'metadata': {'name': 'data'}}] if self.pvcs else []})
         if args[:2] == ['helm', 'list']:

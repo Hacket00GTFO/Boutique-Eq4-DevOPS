@@ -40,9 +40,8 @@ class NativeAutomationTests(unittest.TestCase):
         self.root.request('POST', 'sys/auth/github', {'type': 'jwt'})
         self.root.request('POST', 'auth/github/config', {'jwt_validation_pubkeys': [public], 'bound_issuer': ISSUER})
         role = role_configuration('owner/repo', 123, 456)
-        self.root.request('POST', 'auth/github/role/boutique-main', role)
         claims = {
-            'iss': ISSUER, 'sub': role['bound_subject'], 'aud': role['bound_audiences'][0],
+            'iss': ISSUER, 'sub': 'repo:owner@456/repo@123:environment:vault-lab', 'aud': role['bound_audiences'][0],
             'repository_id': '123', 'repository_owner_id': '456', 'ref': 'refs/heads/main',
             'workflow_ref': role['bound_claims']['workflow_ref'][0],
             'iat': int(time.time()) - 5, 'nbf': int(time.time()) - 5, 'exp': int(time.time()) + 300,
@@ -54,6 +53,12 @@ class NativeAutomationTests(unittest.TestCase):
             signature = private.sign(message, padding.PKCS1v15(), hashes.SHA256())
             return (message + b'.' + base64.urlsafe_b64encode(signature).rstrip(b'=')).decode()
         anonymous = Vault()
+        # Reproduce the observed GitHub immutable-subject failure against a real Vault.
+        legacy = dict(role, bound_subject='repo:owner/repo:environment:vault-lab')
+        self.root.request('POST', 'auth/github/role/boutique-main', legacy)
+        with self.assertRaisesRegex(SafeError, 'HTTP 400'):
+            anonymous.request('POST', 'auth/github/login', {'role': 'boutique-main', 'jwt': token(claims)})
+        self.root.request('POST', 'auth/github/role/boutique-main', role)
         auth = anonymous.request('POST', 'auth/github/login', {'role': 'boutique-main', 'jwt': token(claims)})[1]['auth']
         self.assertEqual(auth['policies'], ['boutique-ci'])
         self.assertFalse(auth['renewable'])
@@ -64,6 +69,9 @@ class NativeAutomationTests(unittest.TestCase):
             client.request('GET', 'sys/audit')
         for change in ({'ref': 'refs/heads/development'}, {'repository_id': '999'},
                        {'repository_owner_id': '999'}, {'sub': 'repo:owner/repo:pull_request'},
+                       {'sub': 'repo:owner/repo:environment:vault-lab'},
+                       {'sub': 'repo:owner@999/repo@123:environment:vault-lab'},
+                       {'sub': 'repo:owner@456/repo@999:environment:vault-lab'},
                        {'workflow_ref': 'owner/repo/.github/workflows/other.yaml@refs/heads/main'},
                        {'aud': 'another-audience'}, {'exp': int(time.time()) - 600}):
             with self.subTest(change=list(change)), self.assertRaises(SafeError):

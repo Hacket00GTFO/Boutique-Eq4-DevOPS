@@ -5,11 +5,13 @@ postgresIntegration:
   enabled: true
   secretName: boutique-integration
   demoDataEnabled: true
-  cookieSecure: false # Browser access is through kubectl port-forward in this lab.
+  cookieSecure: false # The lab load balancer serves plain HTTP (no domain or TLS certificate).
   database:
     create: true
     storageClassName: boutique-ebs-gp3
 frontend:
-  externalService: false
+  # Public HTTP link for class demos: EKS creates a Classic ELB with LabRole.
+  # It keeps billing while the Lab is stopped; set false to remove it.
+  externalService: true
 loadGenerator:
   create: false

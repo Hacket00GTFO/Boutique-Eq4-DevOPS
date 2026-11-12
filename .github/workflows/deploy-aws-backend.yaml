@@ -20,18 +20,30 @@ on:
       - "!terraform/aws/vault/**"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+concurrency:
+  group: boutique-aws-data-layer
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   terraform-apply:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: terraform/aws
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.16.1"
+          terraform_version: "1.12.2"
 
       - name: Configurar credenciales de AWS (Learner Lab)
         id: aws
@@ -48,10 +60,14 @@ jobs:
         run: test "$AWS_ACCOUNT" = 716142453772
 
       - name: Terraform Init
-        run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        run: |
+          test -n "$TF_STATE_BUCKET"
+          terraform init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -input=false -auto-approve tfplan

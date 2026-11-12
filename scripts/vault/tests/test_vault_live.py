@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import DATA_PATH, SafeError, Vault, validate_values
 import bootstrap
 import recover_root
+import repair_github_oidc
 
 
 def free_port():
@@ -321,6 +322,24 @@ class LiveVaultTests(unittest.TestCase):
             self.config_path.write_text(original_config)
             self.process.send_signal(signal.SIGHUP)
             subprocess.run(['gpgconf', '--homedir', str(home), '--kill', 'gpg-agent'], check=False)
+
+    def test_oidc_repair_failure_revokes_real_root_and_operator_tokens(self):
+        auth = self.root.request('POST', 'auth/token/create-orphan', {'policies': ['root']})[1]['auth']
+        temporary_root = Vault(auth['client_token'])
+        operator_tokens = []
+        def failing_configuration(operator, *args):
+            operator_tokens.append(operator.token)
+            self.assertEqual(operator.request('GET', 'auth/token/lookup-self')[1]['data']['policies'], ['boutique-operator'])
+            with self.assertRaisesRegex(SafeError, 'HTTP 403'):
+                temporary_root.request('GET', 'auth/token/lookup-self')
+            raise SafeError('Simulated incompatible role')
+        with patch.object(repair_github_oidc, 'configure', side_effect=failing_configuration), self.assertRaises(SafeError):
+            repair_github_oidc.repair(temporary_root, 'owner/repo', 123, 456)
+        self.assertEqual(len(operator_tokens), 1)
+        for token in [temporary_root.token, *operator_tokens]:
+            with self.assertRaisesRegex(SafeError, 'HTTP 403'):
+                Vault(token).request('GET', 'auth/token/lookup-self')
+        self.root.ready()
 
     def test_z_restart_retains_raft_and_requires_unseal(self):
         self.__class__.stop()

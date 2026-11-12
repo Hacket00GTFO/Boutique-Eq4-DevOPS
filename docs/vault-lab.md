@@ -243,14 +243,16 @@ Las nuevas pruebas Vault son obligatorias antes del build ECR.
 La verificación funcional reutiliza la suite HTTP/gRPC/PostgreSQL existente
 dentro de catalogservice. Crea productos/pedidos sintéticos, archiva sus SKU,
 prueba login, catálogo y checkout y deja pedidos de demostración. Pago, envío y
-correo siguen usando los simuladores. El frontend queda privado:
+correo siguen usando los simuladores. El frontend se publica por HTTP en el
+Service `frontend-external` (ELB); el enlace aparece en el resumen del CD:
 
 ```bash
-kubectl -n boutique-vault-lab port-forward service/frontend 8080:80
+kubectl -n boutique-vault-lab get service frontend-external
 ```
 
-Abrir `http://localhost:8080`. El modo lab usa cookie no Secure para este túnel
-HTTP local; Vault siempre usa TLS. La contraseña administrativa se consulta
+El modo lab usa cookie no Secure porque el balanceador sirve HTTP sin
+certificado; Vault siempre usa TLS. Ver
+[abrir la aplicación](aws-automatic-deployment.md#abrir-la-aplicación-y-aceptar-la-entrega). La contraseña administrativa se consulta
 mediante la sesión privada de operador en Vault, nunca en logs de Actions.
 
 ## 5. Rotación, fallos y recuperación
@@ -336,6 +338,34 @@ Después configurar Vault, emitir y comprobar el operador antes de revocar los
 tokens raíz. Sustituir la clave PGP inaccesible mediante una ceremonia de rekey
 con verificación, conservar las participaciones anteriores hasta completar esa
 ceremonia y renovar las copias cifradas de custodia.
+
+Para Vault con KMS nativo, usar el `init.json` de la custodia de **esa misma
+instalación**, conservada en el artefacto `local-bootstrap-verification`.
+El archivo exterior y cada participación están cifrados con PGP. Descifrar el
+contenedor en memoria y conservar únicamente el miembro regular `init.json`
+en un directorio 0700, archivo 0600, fuera de Git. No imprimir su contenido ni
+extraer el snapshot en texto claro. El helper selecciona `recovery_keys_base64`
+para KMS nuevo y conserva compatibilidad con participaciones Shamir después de
+una migración KMS completada; rechaza migraciones pendientes y custodia incompleta.
+
+Si el propósito es reparar la confianza OIDC, después de confirmar el cierre
+de la ventana ejecutar, con el mismo túnel y las claves aún desbloqueadas:
+
+```bash
+python scripts/vault/repair_github_oidc.py \
+  --root-file "$RECOVERED_ROOT" \
+  --gpg-home "$HOME/vault-custody/gnupg" \
+  --repo Hacket00GTFO/Boutique-Eq4-DevOPS \
+  --repository-id 1333737803 --owner-id 181441407
+```
+
+El root recuperado se descifra solo en memoria. Emite un operador de quince
+minutos, sin política `root` ni política predeterminada, comprueba sus límites
+y revoca el root antes de actualizar la confianza. El operador se revoca al
+terminar, incluso si la configuración del rol falla. Un error de revocación
+detiene la operación y requiere comprobar la sesión antes de reintentar.
+La escritura verificada del rol no acredita el login real de GitHub: esa prueba
+sigue siendo obligatoria dentro del bootstrap antes de activar CD.
 
 Referencias: [configuración de acceso de recuperación](https://developer.hashicorp.com/vault/docs/configuration#enable_unauthenticated_access)
 y [API de generación por quorum](https://developer.hashicorp.com/vault/api-docs/system/generate-root).

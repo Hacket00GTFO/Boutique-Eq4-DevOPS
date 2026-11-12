@@ -24,9 +24,13 @@ on:
     paths:
       - 'helm-chart/**'
       - '.github/workflows/helm-chart-ci.yaml'
+permissions:
+  contents: read
+
 jobs:
   helm-chart-ci:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: helm lint
