@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SafeError
-from recover_lab_workers import recover
+from recover_lab_workers import ACCOUNT, recover
 
 WINDOW = {'GITHUB_REF': 'refs/heads/main', 'GITHUB_EVENT_NAME': 'push',
           'DATA_RECOVERY_VERIFIED': 'true', 'VAULT_AUTOMATION_READY': 'true', 'VAULT_INSTANCE_ID': 'i-22222222'}
@@ -22,9 +22,9 @@ class LabCloud:
     def __init__(self):
         self.calls = []
         self.members = {'nodes': ['i-app1', 'i-app2'], 'storage': ['i-storage']}
-        self.role = {'nodes': 'arn:aws:iam::716142453772:role/cf-LabEksNodeRole-test',
-                     'storage': 'arn:aws:iam::716142453772:role/LabRole'}
-        self.account, self.vpc, self.state = '716142453772', 'vpc-owned', 'running'
+        self.role = {'nodes': f'arn:aws:iam::{ACCOUNT}:role/cf-LabEksNodeRole-test',
+                     'storage': f'arn:aws:iam::{ACCOUNT}:role/LabRole'}
+        self.account, self.vpc, self.state = ACCOUNT, 'vpc-owned', 'running'
         self.membership_reads = 0
         self.change_on_second_read = False
 
@@ -137,7 +137,7 @@ class LabWorkersTests(unittest.TestCase):
             setattr(cloud, field, value)
             variants.append(cloud)
         cloud = LabCloud()
-        cloud.role['storage'] = 'arn:aws:iam::716142453772:role/OtherRole'
+        cloud.role['storage'] = f'arn:aws:iam::{ACCOUNT}:role/OtherRole'
         variants.append(cloud)
         cloud = LabCloud()
         cloud.members['nodes'].append('i-extra')
