@@ -1,11 +1,13 @@
 """Read-only recovery inventory; never opens disks or prints credentials."""
 import json
 import base64
+import os
 import re
 import subprocess
 import sys
 
-ACCOUNT = '716142453772'
+# Learner Lab account from the AWS_ACCOUNT_ID repository variable; empty fails every check closed.
+ACCOUNT = os.environ.get('AWS_ACCOUNT_ID', '')
 
 
 def application_inventory(execute):

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ.setdefault('AWS_ACCOUNT_ID', '111122223333')  # Activation rejects an unconfigured account.
 from activate_actions import activate, validate_evidence, preserve_custody, AWS_KEYS
 from common import SafeError
 from recovery_evidence import REPO, ACCOUNT, require_recovery

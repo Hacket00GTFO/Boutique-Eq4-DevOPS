@@ -7,7 +7,8 @@ import re
 import subprocess
 import sys
 
-ACCOUNT = '716142453772'
+# Learner Lab account from the AWS_ACCOUNT_ID repository variable; empty fails every check closed.
+ACCOUNT = os.environ.get('AWS_ACCOUNT_ID', '')
 PREFIX = f'arn:aws:kms:us-east-1:{ACCOUNT}:key/'
 ALIAS = 'alias/boutique-vault-lab'
 

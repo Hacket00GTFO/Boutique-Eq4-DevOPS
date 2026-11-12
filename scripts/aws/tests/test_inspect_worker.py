@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from inspect_worker import restart_unjoined_workers, PreparationError
+from inspect_worker import ACCOUNT, restart_unjoined_workers, PreparationError
 
 
 class WorkerRecoveryTests(unittest.TestCase):
@@ -33,10 +33,10 @@ class WorkerRecoveryTests(unittest.TestCase):
 
     def responses(self):
         return [
-            {'nodegroup': {'nodeRole': 'arn:aws:iam::716142453772:role/cf-LabEksNodeRole-test',
+            {'nodegroup': {'nodeRole': f'arn:aws:iam::{ACCOUNT}:role/cf-LabEksNodeRole-test',
                            'resources': {'autoScalingGroups': [{'name': 'app-workers'}]}}},
             {'AutoScalingGroups': [{'Instances': [{'InstanceId': 'i-app1'}, {'InstanceId': 'i-app2'}]}]},
-            {'nodegroup': {'nodeRole': 'arn:aws:iam::716142453772:role/LabRole',
+            {'nodegroup': {'nodeRole': f'arn:aws:iam::{ACCOUNT}:role/LabRole',
                            'resources': {'autoScalingGroups': [{'name': 'storage-worker'}]}}},
             {'AutoScalingGroups': [{'Instances': [{'InstanceId': 'i-storage'}]}]},
             {'Reservations': [{'Instances': [{'InstanceId': instance, 'State': {'Name': 'running'}}
@@ -58,7 +58,7 @@ class WorkerRecoveryTests(unittest.TestCase):
     def test_changed_roles_instance_set_or_state_never_reboot(self):
         variants = []
         wrong_role = self.responses()
-        wrong_role[2]['nodegroup']['nodeRole'] = 'arn:aws:iam::716142453772:role/OtherRole'
+        wrong_role[2]['nodegroup']['nodeRole'] = f'arn:aws:iam::{ACCOUNT}:role/OtherRole'
         variants.append(wrong_role)
         extra_worker = self.responses()
         extra_worker[1]['AutoScalingGroups'][0]['Instances'].append({'InstanceId': 'i-other'})
