@@ -20,6 +20,10 @@ on:
       - "!terraform/aws/vault/**"
   workflow_dispatch: {}
 
+# Learner Lab account; change only the AWS_ACCOUNT_ID repository variable when switching Labs.
+env:
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
 permissions:
   contents: read
 
@@ -57,7 +61,7 @@ jobs:
       - name: Require the target AWS account
         env:
           AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
-        run: test "$AWS_ACCOUNT" = 716142453772
+        run: test "$AWS_ACCOUNT" = "$AWS_ACCOUNT_ID"
 
       - name: Terraform Init
         env:

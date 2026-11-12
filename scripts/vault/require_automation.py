@@ -11,7 +11,8 @@ from common import SafeError, Vault, VaultUnavailable
 from resume_lab import aws
 from tunnel_state import require_process, wait_tunnel
 
-ACCOUNT = '716142453772'
+# Learner Lab account from the AWS_ACCOUNT_ID repository variable; empty fails every check closed.
+ACCOUNT = os.environ.get('AWS_ACCOUNT_ID', '')
 
 
 def configuration(values=os.environ):

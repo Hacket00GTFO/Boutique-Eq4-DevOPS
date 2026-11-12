@@ -16,6 +16,10 @@ on:
         type: string
         default: ''
 
+# Learner Lab account; change only the AWS_ACCOUNT_ID repository variable when switching Labs.
+env:
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
 permissions:
   contents: read
   pull-requests: read
@@ -153,7 +157,8 @@ jobs:
         run: |
           test "$AUTOMATION_READY" != true
           [[ "$VAULT_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]]
-          [[ "$VAULT_KMS_KEY_ARN" =~ ^arn:aws:kms:us-east-1:716142453772:key/[0-9a-f-]{36}$ ]]
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$VAULT_KMS_KEY_ARN" =~ ^arn:aws:kms:us-east-1:${AWS_ACCOUNT_ID}:key/[0-9a-f-]{36}$ ]]
           test -n "$ANSIBLE_SSM_BUCKET"
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -162,7 +167,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
       - name: Verify the exact AWS account
-        run: test "$(aws sts get-caller-identity --query Account --output text)" = 716142453772
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -366,7 +371,7 @@ jobs:
       - name: Require the target AWS account
         env:
           AWS_ACCOUNT: ${{ steps.aws.outputs.aws-account-id }}
-        run: test "$AWS_ACCOUNT" = 716142453772
+        run: test "$AWS_ACCOUNT" = "$AWS_ACCOUNT_ID"
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2

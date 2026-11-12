@@ -27,6 +27,26 @@ GitHub no puede activar ni extender el temporizador de AWS Academy. La sesión
 debe mantenerse vigente durante las pruebas, el build y el despliegue.
 Actualizar un secret no inicia un workflow por sí solo.
 
+## Cambiar de Learner Lab
+
+Cada Learner Lab es una cuenta de AWS distinta. Workflows y scripts comparan
+las credenciales con la variable de repositorio `AWS_ACCOUNT_ID`; el número no
+está escrito en el código. Si la variable falta o no coincide, se detienen.
+
+1. Obtener el número de la cuenta nueva desde la terminal del Lab:
+   `aws sts get-caller-identity --query Account --output text`.
+2. Actualizar `AWS_ACCOUNT_ID` y los tres secrets AWS del repositorio.
+3. Poner `DATA_RECOVERY_VERIFIED` y `VAULT_AUTOMATION_READY` en `false` dentro
+   del environment `vault-lab`: los recursos y datos anteriores no existen ahí.
+4. Ejecutar `CI: Docker build & push a ECR` desde **development** con
+   `operation=rebuild-infrastructure`. Crea buckets, KMS, EKS, ECR y la
+   instancia de Vault, e imprime los nuevos `VAULT_INSTANCE_ID`,
+   `VAULT_KMS_KEY_ARN` y `VAULT_SSM_BUCKET` para el environment `vault-lab`.
+5. Completar la preparación inicial descrita abajo (Vault, datos y activación).
+
+El clúster EKS, el ELB y los discos siguen cobrando con el Lab detenido.
+Destruirlos cuando no se usen evita agotar el presupuesto.
+
 ## Preparación inicial de la instalación recuperada
 
 Esta preparación se realiza una vez sobre la infraestructura existente. La copia
