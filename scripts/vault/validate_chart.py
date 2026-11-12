@@ -29,8 +29,11 @@ def main():
         assert postgres['spec']['volumeClaimTemplates'][0]['spec']['storageClassName'] == 'boutique-ebs-gp3'
         assert all(d['metadata'].get('namespace') == 'boutique-vault-lab' for d in docs)
         assert not any(d['kind'] == 'Secret' and d['metadata']['name'] == 'boutique-integration' for d in docs), 'Helm must never persist application secret values'
-        assert not any(d['kind'] == 'Service' and d['spec'].get('type') == 'LoadBalancer' for d in docs)
-    print('PASS base/PostgreSQL/lab renders, isolated namespace, private frontend, new migration job and four consumer rollouts.')
+        public = [d for d in docs if d['kind'] == 'Service' and d['spec'].get('type') == 'LoadBalancer']
+        assert [d['metadata']['name'] for d in public] == ['frontend-external'], 'Only the storefront may be public'
+        assert public[0]['spec']['selector'] == {'app': 'frontend'}
+        assert [(p['port'], p['targetPort']) for p in public[0]['spec']['ports']] == [(80, 8080)]
+    print('PASS base/PostgreSQL/lab renders, isolated namespace, only frontend public, new migration job and four consumer rollouts.')
 
 
 if __name__ == '__main__':

@@ -163,6 +163,30 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         shell: bash
         run: python scripts/vault/deploy.py --registry "$ECR_REGISTRY" --image-tag "$IMAGE_TAG" --revision "$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
+      - name: Publish the public storefront link
+        if: steps.delivery.outcome == 'success'
+        shell: bash
+        run: |
+          set -uo pipefail
+          # The first ELB can take a few minutes; a missing hostname never fails the release.
+          host=''
+          for _ in $(seq 1 30); do
+            host=$(kubectl -n boutique-vault-lab get service frontend-external \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            [ -n "$host" ] && break
+            sleep 10
+          done
+          {
+            echo '## Storefront link'
+            if [ -n "$host" ]; then
+              echo "http://$host"
+              echo
+              echo 'A new load balancer may need a few more minutes before DNS resolves.'
+            else
+              echo 'The load balancer has no hostname yet. Check later with:'
+              echo '`kubectl -n boutique-vault-lab get service frontend-external`'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Close remote SSM session and remove temporary trust files
         if: always()
         shell: bash
