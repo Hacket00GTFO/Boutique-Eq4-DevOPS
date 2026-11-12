@@ -194,14 +194,41 @@ acceso AWS antes de subirlas mediante stdin, sin imprimir sus valores.
 
 ## Abrir la aplicación y aceptar la entrega
 
-El frontend conserva su acceso privado. Con credenciales vigentes:
+La tienda se publica por HTTP mediante un balanceador clásico (ELB) que EKS crea
+con `LabRole` a partir del Service `frontend-external`. Al terminar el CD, el
+resumen del run muestra el enlace en **Storefront link**. También se consulta con:
 
 ```bash
 aws eks update-kubeconfig --name boutique-eq4-eks --region us-east-1
-kubectl -n boutique-vault-lab port-forward service/frontend 8080:80
+kubectl -n boutique-vault-lab get service frontend-external
 ```
 
-Abrir `http://localhost:8080`. Para dar la automatización por verificada se
+El enlace se conserva entre sesiones mientras exista el Service. Antes de una
+clase o demostración:
+
+1. Activar **Start Lab** con 15–20 minutos de margen. Los nodos de EKS se
+   detienen al cerrar la sesión y vuelven a arrancar con ella.
+2. Esperar a que los pods estén listos y abrir el enlace. No se necesitan
+   credenciales nuevas en GitHub solo para abrirlo.
+3. Si no responde tras unos minutos, renovar los tres secrets AWS y ejecutar
+   `CI: Docker build & push a ECR` desde `main` con `operation=release`, que
+   recupera los trabajadores y vuelve a desplegar (~20 minutos).
+
+Consideraciones:
+
+- El ELB sigue cobrando mientras el Lab está detenido (~0.025 USD/h). Para
+  retirarlo, poner `frontend.externalService: false` en
+  `helm-chart/values-vault-lab.yaml` y desplegar.
+- Solo HTTP: sin dominio ni certificado no hay TLS, por eso `cookieSecure`
+  permanece en `false`.
+- `/admin/login` también es accesible desde internet; usar contraseñas de
+  laboratorio y no reutilizarlas.
+- `scripts/vault/validate_chart.py` solo admite `frontend-external` como
+  LoadBalancer; cualquier otro Service público hace fallar el CI.
+
+Como alternativa privada sigue disponible
+`kubectl -n boutique-vault-lab port-forward service/frontend 8080:80` y
+`http://localhost:8080`. Para dar la automatización por verificada se
 necesita un merge con CD y smoke aprobados, seguido de otro en una sesión
 posterior renovando solo las credenciales AWS. Comprobar persistencia del
 administrador y de los datos entre ambas ejecuciones y conservar sus enlaces.

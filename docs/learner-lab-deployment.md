@@ -168,9 +168,9 @@ CI manualmente; Vault emite uno por job. Ver
    llama a **CD: Helm deploy a EKS** con el mismo SHA y ejecuta
    `vault-lab-deploy`: reanuda las instancias conocidas, aplica Ansible,
    verifica ECR/CSI, abre SSM, autentica con OIDC, lee Vault, crea el Secret,
-   despliega Helm y ejecuta el smoke funcional. El frontend queda privado en
-   `boutique-vault-lab`; acceder con el port-forward de
-   [la guía](vault-lab.md#4-activar-github-actions).
+   despliega Helm y ejecuta el smoke funcional. El frontend se publica en
+   `boutique-vault-lab` mediante el ELB de `frontend-external`; el enlace
+   aparece en el resumen del CD.
 
 **Puerta final:** build ECR y CD de Vault exitosos, Helm sano, pods listos,
 PostgreSQL persistente y smoke de login, catálogo y checkout satisfactorio.
