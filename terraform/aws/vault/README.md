@@ -10,6 +10,11 @@ Copiar `terraform.tfvars.example` a `terraform.tfvars`, completar los identifica
 y el CIDR administrativo, y seguir [el procedimiento completo](../../../docs/vault-lab.md).
 El estado usa `modulo-vault/terraform.tfstate`, independiente de EKS y DynamoDB.
 
+`collector_cidrs` habilita la lectura de salud desde el colector que corre dentro
+de EKS. En este laboratorio son las dos subredes del clúster
+(`10.0.1.0/24` y `10.0.2.0/24`). Sin esa regla, el panel muestra Vault como
+`Sin conexión`; el resto de la API sigue protegido por TLS y autenticación.
+
 El bucket de transferencias SSM se prepara con `scripts/vault/aws_prepare.py`.
 Se evita gestionarlo mediante un recurso S3 de Terraform por la restricción
 `GetBucketObjectLockConfiguration` documentada para este Learner Lab.

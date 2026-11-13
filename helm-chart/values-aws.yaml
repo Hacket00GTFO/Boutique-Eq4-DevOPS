@@ -1,5 +1,11 @@
 # Overrides para desplegar en el cluster EKS de AWS Academy Learner Lab.
-# Uso: helm upgrade --install online-boutique ./helm-chart -f helm-chart/values-aws.yaml
+# El CD combina esta base con values-postgres.yaml y values-vault-lab.yaml:
+#   helm upgrade --install boutique-vault-lab ./helm-chart -n boutique-vault-lab \
+#     -f helm-chart/values-aws.yaml -f helm-chart/values-postgres.yaml \
+#     -f helm-chart/values-vault-lab.yaml
+# values-postgres.yaml activa el backend administrativo (ADMIN_DATA_MODE=backend).
+# Sin ese archivo y el Secret boutique-integration, las vistas de Vault/Ansible
+# se quedan vacias porque el frontend no consulta la API de operaciones.
 #
 # El valor real de "repository" lo pone el workflow de CI/CD en tiempo de
 # despliegue (viene del output "ecr_registry" de terraform/aws/k8s), asi que
@@ -9,3 +15,8 @@ images:
 
 frontend:
   platform: aws
+
+operations:
+  # UI nativa de Vault a traves del tunel SSM del operador (localhost:18200).
+  # Requiere el tunel abierto y el certificado publico de Vault en el navegador.
+  vaultUIURL: "https://localhost:18200"

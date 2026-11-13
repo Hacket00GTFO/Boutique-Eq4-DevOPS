@@ -42,13 +42,51 @@ detalle nuevo aparece en las nuevas ejecuciones. Búsqueda, filtro de errores
 retiene hasta 400 eventos y se recorta por bytes antes de superar el límite de envío.
 No se entregan tokens de Vault, participaciones ni claves privadas al navegador.
 
-## Conectar reportes reales
+## Actualización automática en el laboratorio
 
-Las vistas funcionan sin agentes configurados y muestran estados vacíos.
-No se generan ejecuciones ficticias. El servidor Vault de AWS sigue requiriendo
-el aprovisionamiento y bootstrap descritos en [la guía Vault](vault-lab.md).
+En AWS, el chart despliega `operations-collector` cuando
+`operations.collector.enabled` está activo; `values-vault-lab.yaml` lo activa
+para el laboratorio. El pod consulta `/v1/sys/health` cada 15 segundos con TLS
+verificado y publica en el backend interno. No necesita token de Vault ni
+credenciales de AWS.
 
-El colector necesita acceso al backend privado y su credencial de servicio
+Antes de Helm, el CD crea en `boutique-vault-lab`:
+
+- El Secret `boutique-operations` con `VAULT_ADDR` (dirección privada de Vault)
+  y `VAULT_CA_CERT` (certificado público de confianza).
+- El ConfigMap `boutique-operations-script` con `scripts/operations_report.py`.
+
+El token de servicio se toma de `ADMIN_API_TOKEN` en el Secret
+`boutique-integration`. El colector requiere que el Security Group de Vault
+permita TCP 8200 desde las subredes de EKS; se configura con `collector_cidrs`
+en `terraform/aws/vault/terraform.tfvars` (en este laboratorio,
+`10.0.1.0/24` y `10.0.2.0/24`). Sin esa regla, la vista muestra Vault como no
+disponible.
+
+El CD también publica una lectura real y el reporte de `site.yml` tras cada
+despliegue correcto. Es un respaldo para la primera instalación o para cuando
+el pod no está sano; la actualización continua la aporta el colector.
+
+Para comprobar el colector:
+
+```bash
+kubectl -n boutique-vault-lab get deployment operations-collector
+kubectl -n boutique-vault-lab logs deployment/operations-collector --tail=20
+```
+
+Debe aparecer `Vault health report published.` cada 15 segundos. Si el
+Security Group aún no permite el puerto 8200 desde las subredes de EKS, el
+colector sigue vivo y publica `reachable: false`; la vista lo muestra como
+Vault no disponible en vez de dejarla vacía.
+
+Las vistas siguen funcionando sin colector y muestran estados vacíos; no se
+generan ejecuciones ficticias. El servidor Vault de AWS requiere además el
+aprovisionamiento y bootstrap descritos en [la guía Vault](vault-lab.md).
+
+## Colector manual para Compose o diagnóstico
+
+Para desarrollo local o diagnóstico, el colector puede ejecutarse desde el
+operador. Necesita acceso al backend privado y su credencial de servicio
 `ADMIN_API_TOKEN`. Suministrarla mediante una sesión privada o gestor de
 credenciales como `OPS_REPORT_TOKEN`; no escribirla en la línea de comandos.
 La API de reportes no tiene proxy POST en el frontend y no permite ejecutar comandos.
@@ -74,7 +112,8 @@ también la imposibilidad de verificar la conexión; no omite silenciosamente
 una caída. Las conexiones de reporte públicas requieren HTTPS verificado y
 no siguen redirecciones. `OPS_REPORT_CA` permite una CA privada del backend.
 
-Para Ansible, ejecutar desde `ansible/` con las mismas variables `OPS_REPORT_*`:
+Para Ansible local, ejecutar desde `ansible/` con las mismas variables
+`OPS_REPORT_*`:
 
 ```bash
 cd ansible
@@ -84,7 +123,7 @@ ansible-playbook site.yml
 `boutique_ops` está habilitado en `ansible.cfg`. Escribe reportes estructurados
 en `.vault-lab/runs/<uuid>.json` y los publica durante la ejecución si se
 configuró `OPS_REPORT_URL`. Si no hay conexión, la ejecución de Ansible continúa
-y el archivo puede publicarse después:
+y el archivo puede publicarse después desde la raíz del repositorio:
 
 ```bash
 python scripts/operations_report.py publish .vault-lab/runs/ID-DE-EJECUCION.json

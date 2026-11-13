@@ -13,5 +13,10 @@ frontend:
   # Public HTTP link for class demos: EKS creates a Classic ELB with LabRole.
   # It keeps billing while the Lab is stopped; set false to remove it.
   externalService: true
+operations:
+  # El CD crea boutique-operations (CA + dirección privada de Vault) y el
+  # ConfigMap con scripts/operations_report.py antes de Helm.
+  collector:
+    enabled: true
 loadGenerator:
   create: false

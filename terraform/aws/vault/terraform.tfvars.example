@@ -3,4 +3,7 @@ vpc_id           = "vpc-REPLACE"
 subnet_id        = "subnet-REPLACE"
 instance_profile = "LabInstanceProfile"
 admin_cidrs      = ["192.0.2.10/32"] # Replace with the operator's actual public IP.
+# Subredes de EKS para el colector de operaciones dentro del clúster. Sin esta
+# regla, el panel de Vault se queda en "Sin conexión".
+collector_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
 enable_auto_unseal = false # Set true once, before running the KMS migration ceremony.

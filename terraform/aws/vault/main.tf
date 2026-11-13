@@ -21,6 +21,16 @@ resource "aws_security_group" "vault" {
     protocol    = "tcp"
     cidr_blocks = var.admin_cidrs
   }
+  dynamic "ingress" {
+    for_each = var.collector_cidrs
+    content {
+      description = "In-cluster operations collector health reads"
+      from_port   = 8200
+      to_port     = 8200
+      protocol    = "tcp"
+      cidr_blocks = [ingress.value]
+    }
+  }
   egress {
     description = "SSM, S3 and signed distribution downloads"
     from_port   = 443

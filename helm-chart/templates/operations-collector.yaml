@@ -1,0 +1,97 @@
+# Colector de operaciones: consulta /v1/sys/health de Vault y publica al backend
+# administrativo. El CD crea el Secret boutique-operations (CA y direccion
+# privada) y el ConfigMap boutique-operations-script antes de Helm.
+{{- if and .Values.operations.collector.enabled .Values.postgresIntegration.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.operations.collector.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.operations.collector.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.operations.collector.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.operations.collector.name }}
+      {{- if .Values.postgresIntegration.rolloutRevision }}
+      annotations:
+        boutique.dev/secret-revision: {{ .Values.postgresIntegration.rolloutRevision | quote }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      {{- if .Values.securityContext.enable }}
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        {{- if .Values.seccompProfile.enable }}
+        seccompProfile:
+          type: {{ .Values.seccompProfile.type }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: collector
+          image: {{ .Values.operations.collector.image }}
+          command: ["python", "/opt/operations/operations_report.py", "vault", "--watch"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: OPS_REPORT_URL
+              value: "http://{{ .Values.catalogService.name }}:80"
+            - name: OPS_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresIntegration.secretName }}
+                  key: ADMIN_API_TOKEN
+            - name: VAULT_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.operations.collector.vaultSecretName }}
+                  key: VAULT_ADDR
+            - name: VAULT_CACERT
+              value: /etc/vault-ca/vault.crt
+          volumeMounts:
+            - name: script
+              mountPath: /opt/operations
+              readOnly: true
+            - name: vault-ca
+              mountPath: /etc/vault-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      volumes:
+        - name: script
+          configMap:
+            name: {{ .Values.operations.collector.scriptConfigMapName }}
+        - name: vault-ca
+          secret:
+            secretName: {{ .Values.operations.collector.vaultSecretName }}
+            items:
+              - key: VAULT_CA_CERT
+                path: vault.crt
+        - name: tmp
+          emptyDir: {}
+{{- end }}
