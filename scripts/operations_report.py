@@ -75,8 +75,14 @@ def main():
         print('Execution report published.')
     else:
         while True:
-            publish(vault_report())
-            print('Vault health report published.', flush=True)
+            try:
+                publish(vault_report())
+                print('Vault health report published.', flush=True)
+            except Exception:
+                if not args.watch:
+                    raise
+                # The backend may still be rolling out; keep the collector alive.
+                print('Vault health report not published; retrying.', file=sys.stderr)
             if not args.watch:
                 break
             time.sleep(15)

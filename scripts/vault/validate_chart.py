@@ -14,11 +14,23 @@ def main():
     subprocess.run([os.environ.get('HELM_BINARY', 'helm'), 'lint', './helm-chart'], check=True)
     base = render()
     assert not any(d['kind'] == 'Job' for d in base), 'Base chart unexpectedly requires PostgreSQL'
+    assert not any(d['kind'] == 'Deployment' and d['metadata']['name'] == 'operations-collector' for d in base), 'Collector must be opt-in'
     postgres = render('-f', 'helm-chart/values-postgres.yaml')
     assert any(d['kind'] == 'Job' for d in postgres)
+    assert not any(d['kind'] == 'Deployment' and d['metadata']['name'] == 'operations-collector' for d in postgres), 'PostgreSQL alone must not enable the collector'
     args = ['-f', 'helm-chart/values-aws.yaml', '-f', 'helm-chart/values-postgres.yaml', '-f', 'helm-chart/values-vault-lab.yaml']
     first = render(*args, '--set-string', 'postgresIntegration.rolloutRevision=123.1')
     second = render(*args, '--set-string', 'postgresIntegration.rolloutRevision=123.2')
+    collector = next(d for d in first if d['kind'] == 'Deployment' and d['metadata']['name'] == 'operations-collector')
+    pod = collector['spec']['template']['spec']
+    container = pod['containers'][0]
+    env = {e['name']: e for e in container['env']}
+    assert env['OPS_REPORT_URL']['value'] == 'http://catalogservice:80'
+    assert env['OPS_REPORT_TOKEN']['valueFrom']['secretKeyRef'] == {'name': 'boutique-integration', 'key': 'ADMIN_API_TOKEN'}
+    assert env['VAULT_ADDR']['valueFrom']['secretKeyRef'] == {'name': 'boutique-operations', 'key': 'VAULT_ADDR'}
+    assert env['VAULT_CACERT']['value'] == '/etc/vault-ca/vault.crt'
+    assert pod['automountServiceAccountToken'] is False
+    assert container['securityContext']['readOnlyRootFilesystem'] is True
     jobs = [next(d for d in docs if d['kind'] == 'Job')['metadata']['name'] for docs in (first, second)]
     assert jobs[0] != jobs[1], 'Re-running the same image must create a fresh migration job'
     for docs, revision in ((first, '123.1'), (second, '123.2')):
@@ -33,7 +45,7 @@ def main():
         assert [d['metadata']['name'] for d in public] == ['frontend-external'], 'Only the storefront may be public'
         assert public[0]['spec']['selector'] == {'app': 'frontend'}
         assert [(p['port'], p['targetPort']) for p in public[0]['spec']['ports']] == [(80, 8080)]
-    print('PASS base/PostgreSQL/lab renders, isolated namespace, only frontend public, new migration job and four consumer rollouts.')
+    print('PASS base/PostgreSQL/lab renders, isolated namespace, only frontend public, new migration job, four consumer rollouts and hardened collector.')
 
 
 if __name__ == '__main__':

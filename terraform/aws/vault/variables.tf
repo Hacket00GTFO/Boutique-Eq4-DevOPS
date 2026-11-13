@@ -28,6 +28,16 @@ variable "admin_cidrs" {
   }
 }
 
+variable "collector_cidrs" {
+  type        = set(string)
+  default     = []
+  description = "EKS subnet CIDRs allowed to read Vault health for the in-cluster operations collector. Keep each entry /24 or narrower."
+  validation {
+    condition     = alltrue([for c in var.collector_cidrs : can(cidrnetmask(c)) && try(tonumber(split("/", c)[1]) >= 24, false)])
+    error_message = "Provide explicit IPv4 collector CIDRs of /24 or narrower."
+  }
+}
+
 variable "instance_type" {
   type    = string
   default = "t3.small"

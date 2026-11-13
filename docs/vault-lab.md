@@ -27,12 +27,22 @@ flowchart LR
     K --> P[PostgreSQL privado / PVC]
 ```
 
-El Security Group de Vault solo admite entrada TCP 8200 desde redes
-administrativas de /24 o más específicas. No admite SSH. Ansible y CI usan
-SSM con salida HTTPS; no necesitan abrir 8200 para los rangos de GitHub.
-El túnel conserva verificación TLS mediante el SAN `localhost`. La UI directa
-requiere un nombre estable incluido en SAN. La IP pública no se incluye,
-porque puede cambiar al reiniciar el Lab; usar el túnel para abrir la UI.
+El Security Group de Vault admite entrada TCP 8200 desde redes administrativas
+de /24 o más específicas y desde las subredes de EKS declaradas en
+`collector_cidrs` (en este laboratorio, `10.0.1.0/24` y `10.0.2.0/24`). Esa
+segunda regla permite que el colector de operaciones consulte
+`/v1/sys/health` cada 15 segundos sin abrir el puerto a Internet. No se admite
+SSH. Ansible y CI usan SSM con salida HTTPS; no necesitan abrir 8200 para los
+rangos de GitHub. El túnel conserva verificación TLS mediante el SAN
+`localhost`. La UI directa requiere un nombre estable incluido en SAN. La IP
+pública no se incluye, porque puede cambiar al reiniciar el Lab; usar el túnel
+para abrir la UI.
+
+El CD crea antes de Helm el Secret `boutique-operations` (CA pública y dirección
+privada de Vault) y el ConfigMap `boutique-operations-script` con
+`scripts/operations_report.py`. El Deployment `operations-collector` usa el
+token de servicio del Secret `boutique-integration` y publica en el backend
+interno; no recibe tokens de Vault ni credenciales de AWS.
 
 | Clave en KV y Kubernetes | Consumidor |
 | --- | --- |
@@ -41,7 +51,7 @@ porque puede cambiar al reiniciar el Lab; usar el túnel para abrir la UI.
 | `APP_DB_PASSWORD` | Bootstrap del rol de aplicación |
 | `POSTGRES_PASSWORD` | PostgreSQL del chart y URL de migración |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Alta inicial del administrador |
-| `ADMIN_API_TOKEN` | frontend y catalogservice |
+| `ADMIN_API_TOKEN` | frontend, catalogservice y operations-collector |
 | `CATALOG_READ_TOKEN` | productcatalogservice y catalogservice |
 | `CHECKOUT_API_TOKEN` | checkoutservice y catalogservice |
 

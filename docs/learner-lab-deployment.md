@@ -84,7 +84,9 @@ workflow de GitHub no crea automáticamente el stack `terraform/aws/k8s`.
    transferencias Ansible/SSM; no reutilizar el bucket de estado.
 2. Ejecutar `scripts/vault/aws_prepare.py` con el bucket SSM, VPC y subnet.
    Completar localmente `terraform/aws/vault/terraform.tfvars` a partir del
-   ejemplo; este archivo no se versiona. Revisar `plan` y aplicar el stack
+   ejemplo; este archivo no se versiona. Incluir
+   `collector_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]` para que el colector
+   dentro de EKS lea la salud de Vault. Revisar `plan` y aplicar el stack
    `terraform/aws/vault` con `TF_STATE_BUCKET`, siguiendo la
    [guía de Vault](vault-lab.md#1-preparar-el-laboratorio).
 3. Esperar a que la EC2 etiquetada `boutique-vault-lab` aparezca `Online` en
@@ -177,13 +179,15 @@ PostgreSQL persistente y smoke de login, catálogo y checkout satisfactorio.
 
 ### 6. Panel de operaciones y evidencia
 
-El panel de Vault/Ansible puede mostrar vistas vacías aunque la aplicación esté
-desplegada: hay que conectar el colector privado al backend y ejecutar Ansible
-con el callback configurado. Seguir [operación del panel](admin-operations.md)
-para publicar salud real de Vault y recaps, sin publicar tokens ni salidas
-privadas. Registrar los resultados remotos en la
-[matriz de evidencias](vault-evidence.md); las pruebas locales existentes no
-acreditan por sí solas un despliegue AWS.
+En el laboratorio, el colector dentro del clúster publica la salud real de
+Vault cada 15 segundos de forma automática; el CD crea su Secret y su ConfigMap,
+y usa el token de servicio de `boutique-integration`. También publica una
+lectura y el recap de `site.yml` tras cada despliegue correcto. La vista no
+caduca mientras el pod esté sano. Para diagnóstico local puede ejecutarse el
+colector manual con `--watch`, siguiendo [operación del
+panel](admin-operations.md), sin publicar tokens ni salidas privadas. Registrar
+los resultados remotos en la [matriz de evidencias](vault-evidence.md); las
+pruebas locales existentes no acreditan por sí solas un despliegue AWS.
 
 ## Si una puerta falla
 
@@ -195,6 +199,9 @@ acreditan por sí solas un despliegue AWS.
 - Vault/SSM falla: comprobar instancia `Online`, túnel, TLS, acceso a KMS y
   confianza OIDC. La [guía de Vault](vault-lab.md)
   documenta la recuperación y el rollback.
+- Panel de Vault sin datos: comprobar el Deployment `operations-collector`, sus
+  logs, el Secret `boutique-operations` y la regla `collector_cidrs` del
+  Security Group; sin esa regla el colector reporta Vault no disponible.
 - Sesión del Lab caducada: iniciar el Lab, renovar juntas las tres claves AWS
   del repositorio y repetir. No se guarda un token CI que haya que renovar.
 

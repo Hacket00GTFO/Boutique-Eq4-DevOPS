@@ -104,6 +104,27 @@ jobs:
           set -euo pipefail
           [[ "$VAULT_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]]
           test -n "$ANSIBLE_SSM_BUCKET"
+
+          # Live telemetry is best-effort: a first install has no backend yet and
+          # must never block the Vault configuration.
+          ops_token=$(kubectl -n boutique-vault-lab get secret boutique-integration \
+            -o jsonpath='{.data.ADMIN_API_TOKEN}' 2>/dev/null | base64 -d || true)
+          if [ -n "$ops_token" ]; then
+            echo "::add-mask::$ops_token"
+            kubectl -n boutique-vault-lab port-forward service/catalogservice 18080:80 \
+              >/tmp/ansible-operations-port-forward.log 2>&1 &
+            ops_forward=$!
+            trap 'kill "$ops_forward" 2>/dev/null || true' EXIT
+            for _ in $(seq 1 15); do
+              if (exec 3<>/dev/tcp/127.0.0.1/18080) 2>/dev/null; then
+                exec 3>&-
+                export OPS_REPORT_URL=http://127.0.0.1:18080
+                export OPS_REPORT_TOKEN="$ops_token"
+                break
+              fi
+              sleep 1
+            done
+          fi
           ansible-playbook site.yml --limit "$VAULT_INSTANCE_ID" -e vault_require_kms=true
       - name: Read the public trust certificate fetched through authenticated SSM
         id: trust
@@ -131,6 +152,34 @@ jobs:
             aws ecr describe-images --repository-name "boutique-eq4/$service" --image-ids "imageTag=$IMAGE_TAG" >/dev/null
           done
           kubectl get namespace boutique-vault-lab >/dev/null
+      - name: Publish Vault trust data and the collector script
+        env:
+          VAULT_CA_CERT: ${{ steps.trust.outputs.ca }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VAULT_CA_CERT"
+          vault_ip=$(aws ec2 describe-instances --instance-ids "$VAULT_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+          [[ "$vault_ip" =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || {
+            echo '::error::Vault has no expected private IPv4 address; the collector cannot be configured.'
+            exit 1
+          }
+          kubectl -n boutique-vault-lab apply --server-side --field-manager=boutique-vault-cd -f - <<EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: boutique-operations
+          type: Opaque
+          data:
+            VAULT_CA_CERT: ${VAULT_CA_CERT}
+          stringData:
+            VAULT_ADDR: https://${vault_ip}:8200
+          EOF
+          kubectl -n boutique-vault-lab create configmap boutique-operations-script \
+            --from-file=operations_report.py=scripts/operations_report.py \
+            --dry-run=client -o yaml \
+            | kubectl -n boutique-vault-lab apply -f -
       - name: Open SSM tunnel and verify Vault TLS
         env:
           VAULT_INSTANCE_ID: ${{ vars.VAULT_INSTANCE_ID }}
@@ -167,6 +216,39 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         shell: bash
         run: python scripts/vault/deploy.py --registry "$ECR_REGISTRY" --image-tag "$IMAGE_TAG" --revision "$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
+      - name: Publish Vault health and the Ansible run to the operations panel
+        if: steps.delivery.outcome == 'success'
+        env:
+          OPS_REPORT_URL: http://127.0.0.1:18080
+          OPS_REPORT_TOKEN: ${{ steps.vault.outputs.BOUTIQUE_ADMIN_API_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Best-effort telemetry: never fail a healthy release if the panel is unavailable.
+          kubectl -n boutique-vault-lab port-forward service/catalogservice 18080:80 \
+            > /tmp/operations-port-forward.log 2>&1 &
+          forward=$!
+          trap 'kill "$forward" 2>/dev/null || true' EXIT
+          ready=false
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/18080) 2>/dev/null; then
+              exec 3>&-
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo '::warning::catalogservice did not accept the private port-forward; telemetry not published.'
+            exit 0
+          fi
+          python scripts/operations_report.py vault || echo '::warning::Vault health report was not published.'
+          report=$(ls -t .vault-lab/runs/*.json 2>/dev/null | head -n 1 || true)
+          if [ -n "$report" ]; then
+            python scripts/operations_report.py publish "$report" || echo '::warning::Ansible report was not published.'
+          else
+            echo '::warning::No Ansible run report was found; the console stays empty.'
+          fi
       - name: Publish the public storefront link
         if: steps.delivery.outcome == 'success'
         shell: bash

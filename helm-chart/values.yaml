@@ -95,6 +95,14 @@ catalogService:
 # Opt-in PostgreSQL backend; secret contents are documented in docs/postgres-integration.md.
 operations:
   vaultUIURL: "" # Optional verified HTTPS address for the operator's browser.
+  collector:
+    # Polls Vault health and publishes it to the admin backend. The CD creates
+    # the referenced Secret and ConfigMap before Helm; see docs/admin-operations.md.
+    enabled: false
+    name: operations-collector
+    image: python:3.12-alpine@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
+    vaultSecretName: boutique-operations
+    scriptConfigMapName: boutique-operations-script
 
 postgresIntegration:
   enabled: false
